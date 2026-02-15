@@ -28,9 +28,23 @@ function Get-ManagedIdentityToken {
         [string]$Resource
     )
 
-    $tokenUri = "$($env:IDENTITY_ENDPOINT)?resource=$Resource&api-version=2019-08-01"
-    $headers = @{ 'X-IDENTITY-HEADER' = $env:IDENTITY_HEADER }
+    $identityEndpoint = $env:IDENTITY_ENDPOINT
+    $identityHeader   = $env:IDENTITY_HEADER
 
+    if ([string]::IsNullOrEmpty($identityEndpoint)) {
+        $msg = "Managed Identity is not properly configured: environment variable 'IDENTITY_ENDPOINT' is not set or is empty. This is required to acquire a Managed Identity token (resource '$Resource')."
+        Write-Error $msg
+        throw [System.InvalidOperationException]::new($msg)
+    }
+
+    if ([string]::IsNullOrEmpty($identityHeader)) {
+        $msg = "Managed Identity is not properly configured: environment variable 'IDENTITY_HEADER' is not set or is empty. This is required to acquire a Managed Identity token (resource '$Resource')."
+        Write-Error $msg
+        throw [System.InvalidOperationException]::new($msg)
+    }
+
+    $tokenUri = "$identityEndpoint?resource=$Resource&api-version=2019-08-01"
+    $headers  = @{ 'X-IDENTITY-HEADER' = $identityHeader }
     try {
         $response = Invoke-RestMethod -Uri $tokenUri -Headers $headers -Method Get
         return $response.access_token
