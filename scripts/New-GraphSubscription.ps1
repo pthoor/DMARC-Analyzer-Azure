@@ -85,7 +85,7 @@ try {
     $resourceGroupLocation = $resourceGroup.Location
     Write-Host "  Resource group validated (Location: $resourceGroupLocation)" -ForegroundColor Green
 } catch {
-    Write-Error "Failed to access resource group '$ResourceGroupName'. Ensure it exists and you have the necessary permissions. Error: $($_.Exception.Message)"
+    Write-Error -ErrorAction Continue "Failed to access resource group '$ResourceGroupName'. Ensure it exists and you have the necessary permissions. Error: $($_.Exception.Message)"
     throw
 }
 
