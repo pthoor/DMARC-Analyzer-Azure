@@ -65,10 +65,21 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (e
 
 var workspaceId = empty(existingWorkspaceId) ? workspace.id : existingWorkspaceId
 
+// Validate existing workspace resource ID format when provided.
+// Expected format:
+//   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}
+var isExistingWorkspaceIdValid = empty(existingWorkspaceId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.OperationalInsights/workspaces/[^/]+$', existingWorkspaceId))
+
+var resolvedWorkspaceName = empty(existingWorkspaceId)
+  ? workspaceName
+  : (isExistingWorkspaceIdValid
+      ? last(split(existingWorkspaceId, '/'))
+      : error('Parameter existingWorkspaceId must be a full resource ID of a Log Analytics workspace, e.g. /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}.'))
+
 // ── Custom Table ──
 
 resource customTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
-  name: '${empty(existingWorkspaceId) ? workspaceName : last(split(existingWorkspaceId, '/'))}/${customTableName}'
+  name: '${resolvedWorkspaceName}/${customTableName}'
   properties: {
     schema: {
       name: customTableName
@@ -290,4 +301,4 @@ output dcrEndpoint string = dcr.properties.logsIngestion.endpoint
 output dcrImmutableId string = dcr.properties.immutableId
 output dcrStreamName string = streamName
 output workspaceId string = workspaceId
-output workspaceName string = empty(existingWorkspaceId) ? workspace.name : last(split(existingWorkspaceId, '/'))
+output workspaceName string = resolvedWorkspaceName
