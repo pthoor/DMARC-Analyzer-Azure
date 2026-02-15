@@ -56,6 +56,11 @@ var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
 // Key Vault Secrets User role definition ID
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
+// Storage RBAC role definition IDs (for MI-based storage auth)
+var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+
 // ── Log Analytics Workspace ──
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (empty(existingWorkspaceId)) {
@@ -207,6 +212,10 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false
     minimumTlsVersion: 'TLS1_2'
+    defaultToOAuthAuthentication: true
+    // allowSharedKeyAccess cannot be set to false on Consumption plan —
+    // the platform mounts the content share using shared key internally.
+    // Slice 2 (Flex Consumption + private endpoints) will remove this limitation.
   }
 }
 
@@ -300,7 +309,13 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     siteConfig: {
       linuxFxVersion: 'PowerShell|7.4'
       appSettings: [
-        { name: 'AzureWebJobsStorage', value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value}' }
+        // MI-based storage auth — no account key in this setting.
+        // Requires Storage Blob Data Owner, Queue Data Contributor, and Table Data Contributor
+        // RBAC roles on the storage account (assigned below).
+        { name: 'AzureWebJobsStorage__accountName', value: storageAccount.name }
+        // Content share still requires a connection string on Consumption (Y1) plan.
+        // This is a platform limitation; moving to Flex Consumption (Slice 2) removes
+        // this last key dependency and allows allowSharedKeyAccess = false.
         { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value}' }
         { name: 'WEBSITE_CONTENTSHARE', value: functionAppName }
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
@@ -343,6 +358,48 @@ resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       keyVaultSecretsUserRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ── Role Assignments: Function App → Storage Account (MI-based auth) ──
+// Required for AzureWebJobsStorage__accountName identity-based connection.
+
+resource storageBlobDataOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageBlobDataOwnerRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageBlobDataOwnerRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageQueueDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageQueueDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageQueueDataContributorRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageTableDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageTableDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageTableDataContributorRoleId
     )
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
