@@ -206,9 +206,16 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (empty(exis
   dependsOn: empty(existingWorkspaceId) ? [workspace] : []
 }
 
+// Validate existing App Insights resource ID format when provided.
+// Expected format:
+//   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}
+var isExistingAppInsightsIdValid = empty(existingAppInsightsId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Insights/components/[^/]+$', existingAppInsightsId))
+
 var appInsightsConnectionString = empty(existingAppInsightsId)
   ? appInsights.properties.ConnectionString
-  : reference(existingAppInsightsId, '2020-02-02').ConnectionString
+  : (isExistingAppInsightsIdValid
+      ? reference(existingAppInsightsId, '2020-02-02').ConnectionString
+      : error('Parameter existingAppInsightsId must be a full resource ID of an Application Insights component, e.g. /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}.'))
 
 // ── Hosting Plan (Consumption) ──
 
