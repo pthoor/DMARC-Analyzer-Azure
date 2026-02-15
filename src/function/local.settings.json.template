@@ -1,0 +1,16 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "powershell",
+
+    "MAILBOX_USER_ID": "<object-id-of-shared-mailbox-user-in-entra-id>",
+
+    "DCR_ENDPOINT": "<from-bicep-output-dcrEndpoint>",
+    "DCR_IMMUTABLE_ID": "<from-bicep-output-dcrImmutableId>",
+    "DCR_STREAM_NAME": "Custom-DMARCReports_CL",
+
+    "GRAPH_SUBSCRIPTION_ID": "<filled-after-running-New-GraphSubscription.ps1>",
+    "GRAPH_CLIENT_STATE": "<random-secret-for-validating-notifications>"
+  }
+}
