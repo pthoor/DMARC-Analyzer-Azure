@@ -621,8 +621,9 @@ function Invoke-DmarcReportProcessing {
     if ($allRecords.Count -gt 0) {
         # Send in batches of 500 (API limit guidance)
         $batchSize = 500
-        for ($i = 0; $i -lt $allRecords.Count; $i += $batchSize) {
-            $batch = $allRecords.GetRange($i, [Math]::Min($batchSize, $allRecords.Count - $i)).ToArray()
+        $recordsArray = $allRecords.ToArray()
+        for ($i = 0; $i -lt $recordsArray.Length; $i += $batchSize) {
+            $batch = $recordsArray | Select-Object -Skip $i -First $batchSize
             Send-DmarcRecordsToLogAnalytics -Records $batch
             Write-Information "Sent batch: $($batch.Count) records (offset $i)."
         }
