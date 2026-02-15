@@ -1,0 +1,275 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# DMARC Report Analytics\n\nThis workbook visualizes DMARC aggregate reports ingested from your shared mailbox. Use it to monitor email authentication health, detect potential spoofing, and track compliance across your domains."
+      },
+      "name": "header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "timeRange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 604800000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 },
+                { "durationMs": 7776000000 }
+              ]
+            }
+          },
+          {
+            "id": "domain",
+            "version": "KqlParameterItem/1.0",
+            "name": "Domain",
+            "type": 2,
+            "isRequired": false,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "DMARCReports_CL | distinct Domain | sort by Domain asc",
+            "typeSettings": {
+              "additionalResourceOptions": ["value::all"],
+              "selectAllValue": "*"
+            },
+            "value": ["value::all"]
+          }
+        ]
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Overview"
+      },
+      "name": "overview-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    TotalMessages = sum(MessageCount),\n    TotalRecords = count(),\n    UniqueSourceIPs = dcount(SourceIP),\n    UniqueReporters = dcount(ReportOrgName),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')\n| extend PassRate = iff(TotalMessages > 0, round(100.0 * Pass / TotalMessages, 1), 0.0)\n| project TotalMessages, TotalRecords, UniqueSourceIPs, UniqueReporters, PassRate",
+        "size": 4,
+        "title": "Summary",
+        "queryType": 0,
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": { "columnMatch": "Column1", "formatter": 1 },
+          "leftContent": { "columnMatch": "TotalMessages", "formatter": 12 },
+          "showBorder": true
+        }
+      },
+      "name": "summary-tiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')\n    by bin(TimeGenerated, 1d)\n| sort by TimeGenerated asc",
+        "size": 0,
+        "title": "Pass/Fail Trend (Daily)",
+        "queryType": 0,
+        "visualization": "timechart"
+      },
+      "name": "pass-fail-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Messages = sum(MessageCount) by PolicyEvaluated_disposition\n| sort by Messages desc",
+        "size": 2,
+        "title": "Policy Disposition",
+        "queryType": 0,
+        "visualization": "piechart"
+      },
+      "name": "disposition-pie"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Source IP Analysis"
+      },
+      "name": "source-ip-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    DkimPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass'),\n    SpfPass = sumif(MessageCount, PolicyEvaluated_spf == 'pass'),\n    Domains = make_set(Domain)\n    by SourceIP\n| extend\n    DkimPassRate = round(100.0 * DkimPass / Messages, 1),\n    SpfPassRate = round(100.0 * SpfPass / Messages, 1)\n| top 50 by Messages desc\n| project SourceIP, Messages, DkimPassRate, SpfPassRate, Domains",
+        "size": 0,
+        "title": "Top 50 Source IPs",
+        "queryType": 0,
+        "visualization": "table",
+        "gridSettings": {
+          "sortBy": [{ "itemKey": "Messages", "sortOrder": 2 }]
+        }
+      },
+      "name": "top-source-ips"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    FailedMessages = sum(MessageCount),\n    Domains = make_set(Domain),\n    HeaderFroms = make_set(HeaderFrom)\n    by SourceIP\n| top 25 by FailedMessages desc\n| project SourceIP, FailedMessages, HeaderFroms, Domains",
+        "size": 0,
+        "title": "Suspicious IPs (Both SPF & DKIM Failing)",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "suspicious-ips"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## SPF & DKIM Alignment"
+      },
+      "name": "alignment-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Messages = sum(MessageCount) by SpfResult\n| sort by Messages desc",
+        "size": 2,
+        "title": "SPF Results",
+        "queryType": 0,
+        "visualization": "piechart"
+      },
+      "name": "spf-results-pie"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Messages = sum(MessageCount) by DkimResult\n| sort by Messages desc",
+        "size": 2,
+        "title": "DKIM Results",
+        "queryType": 0,
+        "visualization": "piechart"
+      },
+      "name": "dkim-results-pie"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    SpfPassRate = round(100.0 * sumif(MessageCount, SpfResult == 'pass') / sum(MessageCount), 1),\n    DkimPassRate = round(100.0 * sumif(MessageCount, DkimResult == 'pass') / sum(MessageCount), 1)\n    by SpfDomain\n| top 25 by Messages desc\n| project SpfDomain, Messages, SpfPassRate, DkimPassRate",
+        "size": 0,
+        "title": "Authentication by SPF Domain",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "auth-by-spf-domain"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Reporter Analysis"
+      },
+      "name": "reporter-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Reports = dcount(ReportId),\n    Records = count(),\n    Messages = sum(MessageCount)\n    by ReportOrgName\n| sort by Messages desc",
+        "size": 0,
+        "title": "Reports by Provider",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "reports-by-provider"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Reports = dcount(ReportId) by bin(TimeGenerated, 1d), ReportOrgName\n| sort by TimeGenerated asc",
+        "size": 0,
+        "title": "Report Volume Over Time by Provider",
+        "queryType": 0,
+        "visualization": "timechart"
+      },
+      "name": "report-volume-timechart"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Domain Compliance"
+      },
+      "name": "domain-compliance-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP)\n    by Domain\n| extend PassRate = round(100.0 * Pass / Messages, 1)\n| project Domain, Messages, PassRate, Fail, UniqueIPs\n| sort by Messages desc",
+        "size": 0,
+        "title": "Per-Domain Compliance",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "domain-compliance"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize arg_max(TimeGenerated, PolicyPublished_p, PolicyPublished_sp, PolicyPublished_pct, PolicyPublished_adkim, PolicyPublished_aspf) by Domain\n| project Domain, Policy=PolicyPublished_p, SubdomainPolicy=PolicyPublished_sp, Pct=PolicyPublished_pct, DKIM_Alignment=PolicyPublished_adkim, SPF_Alignment=PolicyPublished_aspf",
+        "size": 0,
+        "title": "Published DMARC Policies",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "published-policies"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Threat Hunting"
+      },
+      "name": "threat-hunting-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where isnotempty(EnvelopeFrom) and HeaderFrom != EnvelopeFrom\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    SpoofedMessages = sum(MessageCount),\n    SourceIPs = make_set(SourceIP, 10)\n    by HeaderFrom, EnvelopeFrom\n| sort by SpoofedMessages desc\n| take 50",
+        "size": 0,
+        "title": "Potential Spoofing (Header/Envelope Mismatch + Auth Fail)",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "spoofing-detection"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nlet known = DMARCReports_CL\n| where TimeGenerated between (ago(30d) .. ago(1d))\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| distinct SourceIP;\nDMARCReports_CL\n| where TimeGenerated > ago(1d)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where SourceIP !in (known)\n| summarize\n    Messages = sum(MessageCount),\n    Domains = make_set(Domain),\n    DkimResult = make_set(PolicyEvaluated_dkim),\n    SpfResult = make_set(PolicyEvaluated_spf)\n    by SourceIP\n| sort by Messages desc\n| take 50",
+        "size": 0,
+        "title": "New Source IPs (Last 24h vs Previous 30 Days)",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "new-source-ips"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

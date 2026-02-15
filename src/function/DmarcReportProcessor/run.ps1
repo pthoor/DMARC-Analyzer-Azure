@@ -1,0 +1,50 @@
+# DmarcReportProcessor - Event Grid Trigger
+# Triggered by Microsoft Graph change notifications delivered via Event Grid.
+# Extracts the message ID from the notification, processes the DMARC report,
+# and ingests records into Log Analytics.
+
+param($eventGridEvent, $TriggerMetadata)
+
+Import-Module "$PSScriptRoot/../modules/DmarcHelpers.psm1" -Force
+
+Write-Information "Event Grid trigger fired. Event type: $($eventGridEvent.eventType)"
+Write-Information "Event data: $($eventGridEvent | ConvertTo-Json -Depth 5 -Compress)"
+
+try {
+    # Extract message ID from the change notification
+    # Event Grid payload from Graph has the resource data in the event body
+    $resourceData = $eventGridEvent.data.resourceData
+    if (-not $resourceData) {
+        # Alternative path: the data might be structured differently
+        $resourceData = $eventGridEvent.data
+    }
+
+    $messageId = $resourceData.id
+    if (-not $messageId) {
+        Write-Error "Could not extract message ID from Event Grid event."
+        Write-Error "Event payload: $($eventGridEvent | ConvertTo-Json -Depth 10)"
+        return
+    }
+
+    # Validate client state if configured
+    $expectedClientState = $env:GRAPH_CLIENT_STATE
+    if ($expectedClientState) {
+        $receivedClientState = $eventGridEvent.data.clientState
+        if ($receivedClientState -ne $expectedClientState) {
+            Write-Error "Client state mismatch. Expected: $expectedClientState, Received: $receivedClientState"
+            return
+        }
+    }
+
+    Write-Information "Processing message ID: $messageId"
+
+    # Process the DMARC report
+    Invoke-DmarcReportProcessing -MessageId $messageId
+
+    Write-Information "Successfully processed DMARC report from message: $messageId"
+}
+catch {
+    Write-Error "Failed to process DMARC report: $_"
+    Write-Error $_.ScriptStackTrace
+    throw  # Re-throw so Event Grid knows to retry
+}
