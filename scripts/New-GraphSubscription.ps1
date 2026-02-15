@@ -83,9 +83,9 @@ Write-Host "  Validating resource group '$ResourceGroupName'..." -ForegroundColo
 try {
     $resourceGroup = Get-AzResourceGroup -Name $ResourceGroupName -ErrorAction Stop
     $resourceGroupLocation = $resourceGroup.Location
-    Write-Host "  Resource group found: $ResourceGroupName (Location: $resourceGroupLocation)" -ForegroundColor Green
+    Write-Host "  Resource group validated (Location: $resourceGroupLocation)" -ForegroundColor Green
 } catch {
-    Write-Error "Failed to access resource group '$ResourceGroupName'. Ensure it exists and you have the necessary permissions."
+    Write-Error "Failed to access resource group '$ResourceGroupName'. Ensure it exists and you have the necessary permissions. Error: $($_.Exception.Message)"
     throw
 }
 
