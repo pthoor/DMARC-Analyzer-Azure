@@ -532,7 +532,8 @@ function Send-DmarcRecordsToLogAnalytics {
 
     $token = Get-ManagedIdentityToken -Resource 'https://monitor.azure.com'
 
-    $uri = "$dcrEndpoint/dataCollectionRules/$dcrImmutableId/streams/${streamName}?api-version=2023-01-01"
+    $encodedStreamName = [System.Uri]::EscapeDataString($streamName)
+    $uri = "$dcrEndpoint/dataCollectionRules/$dcrImmutableId/streams/${encodedStreamName}?api-version=2023-01-01"
 
     $headers = @{
         'Authorization' = "Bearer $token"
