@@ -78,6 +78,17 @@ Write-Host "══════════════════════�
 
 Write-Host "[1/4] Checking prerequisites..." -ForegroundColor Yellow
 
+# Validate resource group exists and get location early
+Write-Host "  Validating resource group '$ResourceGroupName'..." -ForegroundColor Gray
+try {
+    $resourceGroup = Get-AzResourceGroup -Name $ResourceGroupName -ErrorAction Stop
+    $resourceGroupLocation = $resourceGroup.Location
+    Write-Host "  Resource group found: $ResourceGroupName (Location: $resourceGroupLocation)" -ForegroundColor Green
+} catch {
+    Write-Error "Failed to access resource group '$ResourceGroupName'. Ensure it exists and you have the necessary permissions."
+    throw
+}
+
 Write-Host @"
 
   Before continuing, ensure you have completed these manual steps:
@@ -109,11 +120,9 @@ if (-not $graphContext) {
     Connect-MgGraph -Scopes 'Mail.Read'
 }
 
-# Build the Event Grid notification URL
+# Build the Event Grid notification URL using the location we already validated
 $partnerTopicName = "DmarcPipeline-$FunctionAppName"
-$notificationUrl = "EventGrid:?azuresubscriptionid=$SubscriptionId&resourcegroup=$ResourceGroupName&partnertopic=$partnerTopicName&location=$(
-    (Get-AzResourceGroup -Name $ResourceGroupName).Location
-)"
+$notificationUrl = "EventGrid:?azuresubscriptionid=$SubscriptionId&resourcegroup=$ResourceGroupName&partnertopic=$partnerTopicName&location=$resourceGroupLocation"
 
 Write-Host "  Notification URL: $notificationUrl" -ForegroundColor Gray
 
