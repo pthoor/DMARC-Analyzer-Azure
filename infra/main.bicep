@@ -44,8 +44,9 @@ var storageName = toLower(take('${baseName}st${uniqueSuffix}', 24))
 var appInsightsName = '${baseName}-ai-${uniqueSuffix}'
 var hostingPlanName = '${baseName}-plan-${uniqueSuffix}'
 var functionAppName = '${baseName}-func-${uniqueSuffix}'
-// Key Vault names must be 3-24 characters. Truncate baseName to preserve full uniqueSuffix.
-var keyVaultName = '${take(baseName, 24 - 2 - length(uniqueSuffix))}kv${uniqueSuffix}'
+// Key Vault names must be 3-24 characters, all lowercase, start with a letter, and contain only letters, numbers, and '-'.
+var keyVaultBase = toLower(take(baseName, 24 - 2 - length(uniqueSuffix)))
+var keyVaultName = !regex('^[a-z][a-z0-9-]*$', keyVaultBase) ? error('Parameter "baseName" must be suitable for Key Vault naming: start with a letter, contain only letters, numbers, or hyphens, and produce a valid Key Vault name.') : '${keyVaultBase}kv${uniqueSuffix}'
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
 
