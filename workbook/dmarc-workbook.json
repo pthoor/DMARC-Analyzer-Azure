@@ -24,10 +24,10 @@
             },
             "typeSettings": {
               "selectableValues": [
-                { "durationMs": 86400000 },
-                { "durationMs": 604800000 },
-                { "durationMs": 2592000000 },
-                { "durationMs": 7776000000 }
+                { "durationMs": 86400000, "displayName": "Last 1 day" },
+                { "durationMs": 604800000, "displayName": "Last 7 days" },
+                { "durationMs": 2592000000, "displayName": "Last 30 days" },
+                { "durationMs": 7776000000, "displayName": "Last 90 days" }
               ]
             }
           },
