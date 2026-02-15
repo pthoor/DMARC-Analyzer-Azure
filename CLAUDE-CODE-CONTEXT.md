@@ -11,6 +11,7 @@ DMARC XML reports arrive at an Exchange Online shared mailbox → Microsoft Grap
 - **PowerShell Azure Functions** (7.4 runtime) — no Python, no C#.
 - **No external PowerShell modules** — all API calls use raw `Invoke-RestMethod` for reliability.
 - **System-assigned Managed Identity** — no app registration, no client secrets.
+- **Azure Key Vault** — secrets stored in Key Vault and referenced via Key Vault references in app settings.
 - **Exchange Online Application RBAC** (not legacy Application Access Policies) — scopes Graph permissions to the DMARC shared mailbox only via Management Scope.
 - **DCR with `kind: Direct`** — built-in `logsIngestion` endpoint, no separate DCE needed.
 - **Event Grid delivery** for Graph change notifications (not webhooks) — built-in retry and dead-letter.
@@ -28,7 +29,7 @@ src/function/                    # PowerShell Azure Function App
   profile.ps1, host.json, requirements.psd1
 
 infra/                           # Bicep templates
-  main.bicep                      # LAW, custom table, DCR, storage, Function App, RBAC
+  main.bicep                      # LAW, custom table, DCR, storage, Key Vault, Function App, RBAC
   main.bicepparam                 # Parameter file
 
 workbook/

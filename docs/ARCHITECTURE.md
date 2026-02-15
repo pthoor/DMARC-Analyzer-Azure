@@ -40,6 +40,11 @@ Azure Monitor Workbook / Microsoft Sentinel Workbook
 
 - **Microsoft Graph**: MI is granted `Mail.Read` + `Mail.ReadWrite` app roles, scoped to the DMARC shared mailbox only via Exchange Online Application RBAC (Management Scope).
 - **Logs Ingestion API**: MI is granted `Monitoring Metrics Publisher` role on the DCR via Azure RBAC.
+- **Azure Key Vault**: MI is granted `Key Vault Secrets User` role to read secrets (such as the Graph client state validation token) via Azure RBAC.
+
+### Secret Management
+
+The `graphClientState` secret (used to validate Graph change notifications) is stored in **Azure Key Vault** and referenced in Function App settings using Key Vault references (`@Microsoft.KeyVault(SecretUri=...)`). This ensures the secret is never stored as plain text in application settings.
 
 ### Exchange Application RBAC (replaces Application Access Policies)
 
@@ -109,4 +114,5 @@ The `DMARCReports_CL` table uses a flat schema — one row per `<record>` elemen
 | Event Grid | ~$0 (100K operations/month free) |
 | Log Analytics (~100-300 MB/month) | ~$0 (5 GB/month free) |
 | Storage Account | ~$0.01 |
-| **Total** | **~$0** |
+| Key Vault (1 secret + <1K operations/month) | ~$0.03 |
+| **Total** | **~$0.04** |
