@@ -240,17 +240,29 @@ function Expand-ZipAttachment {
 
             if ($entryName.EndsWith('.xml')) {
                 $reader = [System.IO.StreamReader]::new($entry.Open())
-                $xmlContents.Add($reader.ReadToEnd())
-                $reader.Dispose()
+                try {
+                    $xmlContents.Add($reader.ReadToEnd())
+                }
+                finally {
+                    $reader.Dispose()
+                }
             }
             elseif ($entryName.EndsWith('.gz')) {
                 # Handle nested .xml.gz inside .zip
                 $entryStream = $entry.Open()
-                $entryMemStream = [System.IO.MemoryStream]::new()
-                $entryStream.CopyTo($entryMemStream)
-                $entryStream.Dispose()
-                $xmlContents.Add((Expand-GzipAttachment -ContentBytes $entryMemStream.ToArray()))
-                $entryMemStream.Dispose()
+                try {
+                    $entryMemStream = [System.IO.MemoryStream]::new()
+                    try {
+                        $entryStream.CopyTo($entryMemStream)
+                        $xmlContents.Add((Expand-GzipAttachment -ContentBytes $entryMemStream.ToArray()))
+                    }
+                    finally {
+                        $entryMemStream.Dispose()
+                    }
+                }
+                finally {
+                    $entryStream.Dispose()
+                }
             }
         }
 
