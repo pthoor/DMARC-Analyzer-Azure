@@ -155,8 +155,20 @@ $appSettings['GRAPH_SUBSCRIPTION_ID'] = $graphSubscriptionId
 Set-AzWebApp -Name $FunctionAppName -ResourceGroupName $ResourceGroupName `
     -AppSettings $appSettings | Out-Null
 
-Write-Host "  GRAPH_SUBSCRIPTION_ID saved." -ForegroundColor Green
+# Verify that the setting was actually saved
+$updatedApp = Get-AzWebApp -Name $FunctionAppName -ResourceGroupName $ResourceGroupName
+$updatedAppSettings = @{}
+foreach ($setting in $updatedApp.SiteConfig.AppSettings) {
+    $updatedAppSettings[$setting.Name] = $setting.Value
+}
 
+if ($updatedAppSettings.ContainsKey('GRAPH_SUBSCRIPTION_ID') -and `
+    $updatedAppSettings['GRAPH_SUBSCRIPTION_ID'] -eq $graphSubscriptionId) {
+    Write-Host "  GRAPH_SUBSCRIPTION_ID saved." -ForegroundColor Green
+} else {
+    Write-Error "Failed to verify that GRAPH_SUBSCRIPTION_ID was saved to app settings."
+    throw "GRAPH_SUBSCRIPTION_ID not found or does not match the created subscription ID."
+}
 # ─────────────────────────────────────────────
 # Step 4: Next steps
 # ─────────────────────────────────────────────
