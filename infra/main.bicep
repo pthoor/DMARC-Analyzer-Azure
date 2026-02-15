@@ -44,11 +44,17 @@ var storageName = toLower(take('${baseName}st${uniqueSuffix}', 24))
 var appInsightsName = '${baseName}-ai-${uniqueSuffix}'
 var hostingPlanName = '${baseName}-plan-${uniqueSuffix}'
 var functionAppName = '${baseName}-func-${uniqueSuffix}'
+// Key Vault names must be 3-24 characters, all lowercase, start with a letter, and contain only letters, numbers, and '-'.
+var keyVaultBase = toLower(take(baseName, 24 - 2 - length(uniqueSuffix)))
+var keyVaultName = !regex('^[a-z][a-z0-9-]*$', keyVaultBase) ? error('Parameter "baseName" must be suitable for Key Vault naming: start with a letter, contain only letters, numbers, or hyphens, and produce a valid Key Vault name.') : '${keyVaultBase}kv${uniqueSuffix}'
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
 
 // Monitoring Metrics Publisher role definition ID
 var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
+
+// Key Vault Secrets User role definition ID
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
 // ── Log Analytics Workspace ──
 
@@ -204,6 +210,38 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
+// ── Key Vault ──
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: keyVaultName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enabledForDeployment: false
+    enabledForDiskEncryption: false
+    enabledForTemplateDeployment: false
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 90
+    // Public network access is enabled to avoid the complexity and cost of private endpoints.
+    // Access is controlled via RBAC - only the Function App's managed identity can read secrets.
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Store the Graph client state secret in Key Vault
+resource graphClientStateSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'graph-client-state'
+  properties: {
+    value: graphClientState
+  }
+}
+
 // ── Application Insights ──
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (empty(existingAppInsightsId)) {
@@ -244,6 +282,10 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
 }
 
 // ── Function App ──
+// The Function App's implicit dependency on the Storage Account is established
+// through the storageAccount.listKeys() calls below. Bicep ensures the storage
+// account is fully deployed before evaluating listKeys(), preventing deployment
+// failures. No explicit dependsOn is needed per Bicep best practices.
 
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
@@ -268,7 +310,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DCR_ENDPOINT', value: dcr.properties.logsIngestion.endpoint }
         { name: 'DCR_IMMUTABLE_ID', value: dcr.properties.immutableId }
         { name: 'DCR_STREAM_NAME', value: streamName }
-        { name: 'GRAPH_CLIENT_STATE', value: graphClientState }
+        { name: 'GRAPH_CLIENT_STATE', value: '@Microsoft.KeyVault(SecretUri=${graphClientStateSecret.properties.secretUri})' }
         // GRAPH_SUBSCRIPTION_ID is set after running New-GraphSubscription.ps1
       ]
       ftpsState: 'Disabled'
@@ -292,6 +334,21 @@ resource dcrRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
+// ── Role Assignment: Function App → Key Vault Secrets User on Key Vault ──
+
+resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, functionApp.id, keyVaultSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      keyVaultSecretsUserRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ── Outputs ──
 
 output functionAppName string = functionApp.name
@@ -302,3 +359,5 @@ output dcrImmutableId string = dcr.properties.immutableId
 output dcrStreamName string = streamName
 output workspaceId string = workspaceId
 output workspaceName string = resolvedWorkspaceName
+output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri

@@ -28,9 +28,23 @@ function Get-ManagedIdentityToken {
         [string]$Resource
     )
 
-    $tokenUri = "$($env:IDENTITY_ENDPOINT)?resource=$Resource&api-version=2019-08-01"
-    $headers = @{ 'X-IDENTITY-HEADER' = $env:IDENTITY_HEADER }
+    $identityEndpoint = $env:IDENTITY_ENDPOINT
+    $identityHeader   = $env:IDENTITY_HEADER
 
+    if ([string]::IsNullOrEmpty($identityEndpoint)) {
+        $msg = "Managed Identity is not properly configured: environment variable 'IDENTITY_ENDPOINT' is not set or is empty. This is required to acquire a Managed Identity token (resource '$Resource')."
+        Write-Error $msg
+        throw [System.InvalidOperationException]::new($msg)
+    }
+
+    if ([string]::IsNullOrEmpty($identityHeader)) {
+        $msg = "Managed Identity is not properly configured: environment variable 'IDENTITY_HEADER' is not set or is empty. This is required to acquire a Managed Identity token (resource '$Resource')."
+        Write-Error $msg
+        throw [System.InvalidOperationException]::new($msg)
+    }
+
+    $tokenUri = "$identityEndpoint?resource=$Resource&api-version=2019-08-01"
+    $headers  = @{ 'X-IDENTITY-HEADER' = $identityHeader }
     try {
         $response = Invoke-RestMethod -Uri $tokenUri -Headers $headers -Method Get
         return $response.access_token
@@ -318,20 +332,31 @@ function ConvertFrom-DmarcXml {
 
     $records = [System.Collections.Generic.List[hashtable]]::new()
 
+    # Use XmlReaderSettings to prohibit DTD processing (defense against XML bombs)
+    $readerSettings = [System.Xml.XmlReaderSettings]::new()
+    $readerSettings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+    $readerSettings.XmlResolver = $null
+    
+    $stringReader = $null
+    $xmlReader = $null
+    
     try {
-        # Explicitly reject XML with DOCTYPE to prevent DTD-based attacks
-        if ($XmlContent -match '<!DOCTYPE') {
-            throw "XML contains a DOCTYPE declaration, which is not allowed."
-        }
-
+        $stringReader = [System.IO.StringReader]::new($XmlContent)
+        $xmlReader = [System.Xml.XmlReader]::Create($stringReader, $readerSettings)
         $xml = [System.Xml.XmlDocument]::new()
-        # Ensure no external XML resources are resolved
-        $xml.XmlResolver = $null
-        $xml.LoadXml($XmlContent)
+        $xml.Load($xmlReader)
     }
     catch {
         Write-Warning "Failed to parse DMARC XML: $_"
         return @()
+    }
+    finally {
+        if ($null -ne $xmlReader) {
+            $xmlReader.Dispose()
+        }
+        if ($null -ne $stringReader) {
+            $stringReader.Dispose()
+        }
     }
 
     $feedback = $xml.feedback
@@ -518,7 +543,8 @@ function Send-DmarcRecordsToLogAnalytics {
 
     $token = Get-ManagedIdentityToken -Resource 'https://monitor.azure.com'
 
-    $uri = "$dcrEndpoint/dataCollectionRules/$dcrImmutableId/streams/${streamName}?api-version=2023-01-01"
+    $encodedStreamName = [System.Uri]::EscapeDataString($streamName)
+    $uri = "$dcrEndpoint/dataCollectionRules/$dcrImmutableId/streams/${encodedStreamName}?api-version=2023-01-01"
 
     $headers = @{
         'Authorization' = "Bearer $token"
@@ -606,8 +632,9 @@ function Invoke-DmarcReportProcessing {
     if ($allRecords.Count -gt 0) {
         # Send in batches of 500 (API limit guidance)
         $batchSize = 500
-        for ($i = 0; $i -lt $allRecords.Count; $i += $batchSize) {
-            $batch = $allRecords.GetRange($i, [Math]::Min($batchSize, $allRecords.Count - $i)).ToArray()
+        $recordsArray = $allRecords.ToArray()
+        for ($i = 0; $i -lt $recordsArray.Length; $i += $batchSize) {
+            $batch = $recordsArray | Select-Object -Skip $i -First $batchSize
             Send-DmarcRecordsToLogAnalytics -Records $batch
             Write-Information "Sent batch: $($batch.Count) records (offset $i)."
         }
