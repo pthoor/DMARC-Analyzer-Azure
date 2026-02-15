@@ -32,7 +32,7 @@ try {
     Write-Information "Subscription renewed. New expiration: $($result.expirationDateTime)"
 }
 catch {
-    $statusCode = $_.Exception.Response.StatusCode.value__
+    $statusCode = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { $null }
 
     if ($statusCode -eq 404) {
         Write-Error "Subscription $subscriptionId not found. It may have expired. Re-run New-GraphSubscription.ps1 to create a new one."

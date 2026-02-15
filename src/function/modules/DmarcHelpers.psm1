@@ -94,7 +94,7 @@ function Invoke-GraphRequest {
         return Invoke-RestMethod @params
     }
     catch {
-        $statusCode = $_.Exception.Response.StatusCode.value__
+        $statusCode = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { 'N/A' }
         Write-Error "Graph API request failed [$Method $Uri] - HTTP $statusCode : $_"
         throw
     }
@@ -168,7 +168,7 @@ function Get-UnreadMessages {
 
     $cutoff = (Get-Date).AddMinutes(-$OlderThanMinutes).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     $filter = "isRead eq false and receivedDateTime lt $cutoff and hasAttachments eq true"
-    $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages?`$filter=$filter&`$top=50&`$select=id,subject,receivedDateTime"
+    $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages?`$filter=$filter&`$orderby=receivedDateTime asc&`$top=50&`$select=id,subject,receivedDateTime"
 
     $result = Invoke-GraphRequest -Uri $uri -Token $Token
     return $result.value
@@ -429,8 +429,12 @@ function ConvertFrom-DmarcXml {
             PolicyEvaluated_disposition    = $row.policy_evaluated.disposition
             PolicyEvaluated_dkim           = $row.policy_evaluated.dkim
             PolicyEvaluated_spf            = $row.policy_evaluated.spf
-            PolicyEvaluated_reason_type    = $row.policy_evaluated.reason.type
-            PolicyEvaluated_reason_comment = $row.policy_evaluated.reason.comment
+            PolicyEvaluated_reason_type    = if ($row.policy_evaluated.reason -is [System.Array]) {
+                ($row.policy_evaluated.reason | ForEach-Object { $_.type }) -join '; '
+            } else { $row.policy_evaluated.reason.type }
+            PolicyEvaluated_reason_comment = if ($row.policy_evaluated.reason -is [System.Array]) {
+                ($row.policy_evaluated.reason | ForEach-Object { $_.comment }) -join '; '
+            } else { $row.policy_evaluated.reason.comment }
             HeaderFrom                     = $identifiers.header_from
             EnvelopeFrom                   = $identifiers.envelope_from
             EnvelopeTo                     = $identifiers.envelope_to
@@ -512,7 +516,7 @@ function Send-DmarcRecordsToLogAnalytics {
         Write-Information "Successfully sent $($Records.Count) records to Log Analytics."
     }
     catch {
-        $statusCode = $_.Exception.Response.StatusCode.value__
+        $statusCode = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { 'N/A' }
         Write-Error "Logs Ingestion API request failed - HTTP $statusCode : $_"
         throw
     }
