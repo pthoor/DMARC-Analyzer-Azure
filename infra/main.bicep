@@ -65,7 +65,7 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (e
 
 var workspaceId = empty(existingWorkspaceId) ? workspace.id : existingWorkspaceId
 
-// Validate existing workspace resource ID format when provided.
+// Validates existing workspace resource ID format when provided.
 // Expected format:
 //   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}
 var isExistingWorkspaceIdValid = empty(existingWorkspaceId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.OperationalInsights/workspaces/[^/]+$', existingWorkspaceId))
@@ -217,7 +217,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (empty(exis
   dependsOn: empty(existingWorkspaceId) ? [workspace] : []
 }
 
-// Validate existing App Insights resource ID format when provided.
+// Validates existing App Insights resource ID format when provided.
 // Expected format:
 //   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}
 var isExistingAppInsightsIdValid = empty(existingAppInsightsId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Insights/components/[^/]+$', existingAppInsightsId))
