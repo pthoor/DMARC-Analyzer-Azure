@@ -28,7 +28,11 @@ try {
     # Validate client state if configured
     $expectedClientState = $env:GRAPH_CLIENT_STATE
     if ($expectedClientState) {
+        # Try to read clientState from the same flexible structure as resourceData
         $receivedClientState = $eventGridEvent.data.clientState
+        if (-not $receivedClientState -and $resourceData) {
+            $receivedClientState = $resourceData.clientState
+        }
         if ($receivedClientState -ne $expectedClientState) {
             Write-Error "Client state mismatch. The received client state does not match the expected value."
             return
