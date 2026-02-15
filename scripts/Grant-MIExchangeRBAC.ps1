@@ -179,7 +179,19 @@ foreach ($roleName in $exoRoles) {
 
     $existing = Get-ManagementRoleAssignment -Identity $assignmentName -ErrorAction SilentlyContinue
     if ($existing) {
-        Write-Host "  $roleName — already assigned." -ForegroundColor Gray
+        if (($existing.App -eq $miAppId) -and ($existing.CustomResourceScope -eq $scopeName)) {
+            Write-Host "  $roleName — already assigned." -ForegroundColor Gray
+        }
+        else {
+            Write-Host "  $roleName — existing assignment '$assignmentName' has different properties. Recreating with correct App and scope..." -ForegroundColor Yellow
+            Remove-ManagementRoleAssignment -Identity $assignmentName -Confirm:$false
+            New-ManagementRoleAssignment `
+                -Name $assignmentName `
+                -Role $roleName `
+                -App $miAppId `
+                -CustomResourceScope $scopeName
+            Write-Host "  $roleName — reassigned with scope '$scopeName'." -ForegroundColor Green
+        }
     }
     else {
         New-ManagementRoleAssignment `
