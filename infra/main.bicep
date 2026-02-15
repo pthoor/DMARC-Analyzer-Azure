@@ -291,10 +291,9 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
 }
 
 // ── Function App ──
-// The Function App's implicit dependency on the Storage Account is established
-// through the storageAccount.listKeys() calls below. Bicep ensures the storage
-// account is fully deployed before evaluating listKeys(), preventing deployment
-// failures. No explicit dependsOn is needed per Bicep best practices.
+// Implicit dependency on Storage Account via storageAccount.name (MI-based auth)
+// and the remaining storageAccount.listKeys() call for the content share.
+// Bicep resolves these references automatically — no explicit dependsOn needed.
 
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName

@@ -3,6 +3,8 @@
 # real-time Event Grid pipeline (e.g., during outages, subscription gaps,
 # or Event Grid delivery failures).
 # Checks for unread messages with attachments older than 1 hour.
+# Note: processes up to 50 messages per run (Graph API $top limit).
+# After a prolonged outage, it may take several daily runs to fully catch up.
 
 param($Timer)
 

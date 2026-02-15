@@ -192,6 +192,13 @@ function Get-UnreadMessages {
 # Attachment Extraction
 # ─────────────────────────────────────────────
 
+# Safety limits to prevent memory exhaustion from oversized or crafted attachments.
+# DMARC reports are typically <1 MB compressed / <5 MB decompressed. These limits
+# are generous enough for the largest legitimate reports from major providers.
+$script:MaxAttachmentBytes  = 25 * 1024 * 1024   # 25 MB compressed input per attachment
+$script:MaxDecompressedBytes = 50 * 1024 * 1024   # 50 MB decompressed output per entry
+$script:MaxZipEntries        = 50                  # max entries processed per ZIP archive
+
 function Expand-DmarcAttachments {
     <#
     .SYNOPSIS
@@ -199,6 +206,7 @@ function Expand-DmarcAttachments {
     .DESCRIPTION
         Handles .xml, .xml.gz, .gz, and .zip file attachments.
         Returns an array of XML content strings.
+        Enforces size limits to guard against oversized or decompression-bomb attachments.
     #>
     [CmdletBinding()]
     param(
@@ -216,6 +224,11 @@ function Expand-DmarcAttachments {
 
         $name = $attachment.name.ToLower()
         $contentBytes = [System.Convert]::FromBase64String($attachment.contentBytes)
+
+        if ($contentBytes.Length -gt $script:MaxAttachmentBytes) {
+            Write-Warning "Skipping attachment '$($attachment.name)': size $($contentBytes.Length) bytes exceeds limit of $($script:MaxAttachmentBytes) bytes."
+            continue
+        }
 
         try {
             if ($name.EndsWith('.zip')) {
@@ -248,18 +261,19 @@ function Expand-ZipAttachment {
 
     try {
         $archive = [System.IO.Compression.ZipArchive]::new($memStream, [System.IO.Compression.ZipArchiveMode]::Read)
+        $entriesProcessed = 0
 
         foreach ($entry in $archive.Entries) {
+            if ($entriesProcessed -ge $script:MaxZipEntries) {
+                Write-Warning "ZIP entry limit reached ($($script:MaxZipEntries)). Remaining entries skipped."
+                break
+            }
+
             $entryName = $entry.Name.ToLower()
 
             if ($entryName.EndsWith('.xml')) {
-                $reader = [System.IO.StreamReader]::new($entry.Open())
-                try {
-                    $xmlContents.Add($reader.ReadToEnd())
-                }
-                finally {
-                    $reader.Dispose()
-                }
+                $xmlContents.Add((Read-StreamWithLimit -Stream $entry.Open() -Limit $script:MaxDecompressedBytes -EntryName $entry.Name))
+                $entriesProcessed++
             }
             elseif ($entryName.EndsWith('.gz')) {
                 # Handle nested .xml.gz inside .zip
@@ -267,7 +281,7 @@ function Expand-ZipAttachment {
                 try {
                     $entryMemStream = [System.IO.MemoryStream]::new()
                     try {
-                        $entryStream.CopyTo($entryMemStream)
+                        Copy-StreamWithLimit -Source $entryStream -Destination $entryMemStream -Limit $script:MaxAttachmentBytes -EntryName $entry.Name
                         $xmlContents.Add((Expand-GzipAttachment -ContentBytes $entryMemStream.ToArray()))
                     }
                     finally {
@@ -277,6 +291,7 @@ function Expand-ZipAttachment {
                 finally {
                     $entryStream.Dispose()
                 }
+                $entriesProcessed++
             }
         }
 
@@ -298,13 +313,64 @@ function Expand-GzipAttachment {
     $outputStream = [System.IO.MemoryStream]::new()
 
     try {
-        $gzipStream.CopyTo($outputStream)
+        Copy-StreamWithLimit -Source $gzipStream -Destination $outputStream -Limit $script:MaxDecompressedBytes -EntryName 'gzip'
         return [System.Text.Encoding]::UTF8.GetString($outputStream.ToArray())
     }
     finally {
         $gzipStream.Dispose()
         $inputStream.Dispose()
         $outputStream.Dispose()
+    }
+}
+
+function Copy-StreamWithLimit {
+    <#
+    .SYNOPSIS
+        Copies from source to destination stream, aborting if the limit is exceeded.
+        Prevents decompression bombs from consuming unbounded memory.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.IO.Stream]$Source,
+        [Parameter(Mandatory)][System.IO.Stream]$Destination,
+        [Parameter(Mandatory)][long]$Limit,
+        [string]$EntryName = 'stream'
+    )
+
+    $buffer = [byte[]]::new(81920)
+    $totalRead = [long]0
+
+    while ($true) {
+        $bytesRead = $Source.Read($buffer, 0, $buffer.Length)
+        if ($bytesRead -eq 0) { break }
+        $totalRead += $bytesRead
+        if ($totalRead -gt $Limit) {
+            throw "Decompressed size of '$EntryName' exceeds limit of $Limit bytes. Aborting to prevent memory exhaustion."
+        }
+        $Destination.Write($buffer, 0, $bytesRead)
+    }
+}
+
+function Read-StreamWithLimit {
+    <#
+    .SYNOPSIS
+        Reads a stream to a UTF-8 string, aborting if the byte limit is exceeded.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.IO.Stream]$Stream,
+        [Parameter(Mandatory)][long]$Limit,
+        [string]$EntryName = 'stream'
+    )
+
+    $outputStream = [System.IO.MemoryStream]::new()
+    try {
+        Copy-StreamWithLimit -Source $Stream -Destination $outputStream -Limit $Limit -EntryName $EntryName
+        return [System.Text.Encoding]::UTF8.GetString($outputStream.ToArray())
+    }
+    finally {
+        $outputStream.Dispose()
+        $Stream.Dispose()
     }
 }
 

@@ -18,8 +18,13 @@ try {
         $resourceData = $eventGridEvent.data
     }
 
-    # Validate client state if configured - fail fast before message ID extraction and logging
+    # Validate client state — defence-in-depth even though Event Grid delivery
+    # is internal to Azure. If GRAPH_CLIENT_STATE is not set, log a warning
+    # so operators notice the misconfiguration rather than silently skipping.
     $expectedClientState = $env:GRAPH_CLIENT_STATE
+    if (-not $expectedClientState) {
+        Write-Warning "GRAPH_CLIENT_STATE is not configured. Client state validation is disabled — configure this setting to enable notification validation."
+    }
     if ($expectedClientState) {
         # Try to read clientState from the same flexible structure as resourceData
         $receivedClientState = $eventGridEvent.data.clientState
