@@ -44,11 +44,15 @@ var storageName = toLower(take('${baseName}st${uniqueSuffix}', 24))
 var appInsightsName = '${baseName}-ai-${uniqueSuffix}'
 var hostingPlanName = '${baseName}-plan-${uniqueSuffix}'
 var functionAppName = '${baseName}-func-${uniqueSuffix}'
+var keyVaultName = '${baseName}-kv-${uniqueSuffix}'
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
 
 // Monitoring Metrics Publisher role definition ID
 var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
+
+// Key Vault Secrets User role definition ID
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
 // ── Log Analytics Workspace ──
 
@@ -193,6 +197,36 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
+// ── Key Vault ──
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: keyVaultName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enabledForDeployment: false
+    enabledForDiskEncryption: false
+    enabledForTemplateDeployment: false
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 90
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Store the Graph client state secret in Key Vault
+resource graphClientStateSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'graph-client-state'
+  properties: {
+    value: graphClientState
+  }
+}
+
 // ── Application Insights ──
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (empty(existingAppInsightsId)) {
@@ -257,7 +291,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DCR_ENDPOINT', value: dcr.properties.logsIngestion.endpoint }
         { name: 'DCR_IMMUTABLE_ID', value: dcr.properties.immutableId }
         { name: 'DCR_STREAM_NAME', value: streamName }
-        { name: 'GRAPH_CLIENT_STATE', value: graphClientState }
+        { name: 'GRAPH_CLIENT_STATE', value: '@Microsoft.KeyVault(SecretUri=${graphClientStateSecret.properties.secretUri})' }
         // GRAPH_SUBSCRIPTION_ID is set after running New-GraphSubscription.ps1
       ]
       ftpsState: 'Disabled'
@@ -281,6 +315,21 @@ resource dcrRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
+// ── Role Assignment: Function App → Key Vault Secrets User on Key Vault ──
+
+resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, functionApp.id, keyVaultSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      keyVaultSecretsUserRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ── Outputs ──
 
 output functionAppName string = functionApp.name
@@ -291,3 +340,5 @@ output dcrImmutableId string = dcr.properties.immutableId
 output dcrStreamName string = streamName
 output workspaceId string = workspaceId
 output workspaceName string = empty(existingWorkspaceId) ? workspace.name : last(split(existingWorkspaceId, '/'))
+output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri
