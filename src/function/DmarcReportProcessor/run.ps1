@@ -18,7 +18,7 @@ try {
         $resourceData = $eventGridEvent.data
     }
 
-    # Validate client state if configured - fail fast before any data extraction
+    # Validate client state if configured - fail fast before message ID extraction and logging
     $expectedClientState = $env:GRAPH_CLIENT_STATE
     if ($expectedClientState) {
         # Try to read clientState from the same flexible structure as resourceData
