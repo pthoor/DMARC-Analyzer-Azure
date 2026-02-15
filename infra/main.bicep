@@ -44,7 +44,8 @@ var storageName = toLower(take('${baseName}st${uniqueSuffix}', 24))
 var appInsightsName = '${baseName}-ai-${uniqueSuffix}'
 var hostingPlanName = '${baseName}-plan-${uniqueSuffix}'
 var functionAppName = '${baseName}-func-${uniqueSuffix}'
-var keyVaultName = '${baseName}-kv-${uniqueSuffix}'
+// Key Vault names must be 3-24 characters. Truncate baseName if needed.
+var keyVaultName = take('${baseName}kv${uniqueSuffix}', 24)
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
 
@@ -214,6 +215,8 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enabledForTemplateDeployment: false
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
+    // Public network access is enabled to avoid the complexity and cost of private endpoints.
+    // Access is controlled via RBAC - only the Function App's managed identity can read secrets.
     publicNetworkAccess: 'Enabled'
   }
 }
