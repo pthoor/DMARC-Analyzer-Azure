@@ -10,7 +10,7 @@ Import-Module "$PSScriptRoot/../modules/DmarcHelpers.psm1" -Force
 Write-Information "Event Grid trigger fired. Event type: $($eventGridEvent.eventType)"
 
 try {
-    # Extract message ID from the change notification
+    # Extract resource data from the change notification
     # Event Grid payload from Graph has the resource data in the event body
     $resourceData = $eventGridEvent.data.resourceData
     if (-not $resourceData) {
@@ -18,14 +18,7 @@ try {
         $resourceData = $eventGridEvent.data
     }
 
-    $messageId = $resourceData.id
-    if (-not $messageId) {
-        Write-Error "Could not extract message ID from Event Grid event."
-        Write-Error "Event payload: $($eventGridEvent | ConvertTo-Json -Depth 10)"
-        return
-    }
-
-    # Validate client state if configured
+    # Validate client state if configured - fail fast before any data extraction
     $expectedClientState = $env:GRAPH_CLIENT_STATE
     if ($expectedClientState) {
         # Try to read clientState from the same flexible structure as resourceData
@@ -37,6 +30,14 @@ try {
             Write-Error "Client state mismatch. The received client state does not match the expected value."
             return
         }
+    }
+
+    # Extract message ID from the validated notification
+    $messageId = $resourceData.id
+    if (-not $messageId) {
+        Write-Error "Could not extract message ID from Event Grid event."
+        Write-Error "Event payload: $($eventGridEvent | ConvertTo-Json -Depth 10)"
+        return
     }
 
     Write-Information "Processing message ID: $messageId"
