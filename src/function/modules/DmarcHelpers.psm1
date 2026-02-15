@@ -332,20 +332,31 @@ function ConvertFrom-DmarcXml {
 
     $records = [System.Collections.Generic.List[hashtable]]::new()
 
+    # Use XmlReaderSettings to prohibit DTD processing (defense against XML bombs)
+    $readerSettings = [System.Xml.XmlReaderSettings]::new()
+    $readerSettings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+    $readerSettings.XmlResolver = $null
+    
+    $stringReader = $null
+    $xmlReader = $null
+    
     try {
-        # Explicitly reject XML with DOCTYPE to prevent DTD-based attacks
-        if ($XmlContent -match '<!DOCTYPE') {
-            throw "XML contains a DOCTYPE declaration, which is not allowed."
-        }
-
+        $stringReader = [System.IO.StringReader]::new($XmlContent)
+        $xmlReader = [System.Xml.XmlReader]::Create($stringReader, $readerSettings)
         $xml = [System.Xml.XmlDocument]::new()
-        # Ensure no external XML resources are resolved
-        $xml.XmlResolver = $null
-        $xml.LoadXml($XmlContent)
+        $xml.Load($xmlReader)
     }
     catch {
         Write-Warning "Failed to parse DMARC XML: $_"
         return @()
+    }
+    finally {
+        if ($null -ne $xmlReader) {
+            $xmlReader.Dispose()
+        }
+        if ($null -ne $stringReader) {
+            $stringReader.Dispose()
+        }
     }
 
     $feedback = $xml.feedback
