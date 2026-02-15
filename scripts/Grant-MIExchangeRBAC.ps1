@@ -148,8 +148,13 @@ else {
 
 Write-Host "`n[4/5] Creating Management Scope for mailbox restriction..." -ForegroundColor Yellow
 
-$scopeName = "DMARC-Mailbox-$($MailboxAddress.Split('@')[0])"
+try {
+    $parsedMailboxAddress = [System.Net.Mail.MailAddress]::new($MailboxAddress)
+} catch {
+    throw "MailboxAddress '$MailboxAddress' is not a valid email address."
+}
 
+$scopeName = "DMARC-Mailbox-$($parsedMailboxAddress.User)"
 $existingScope = Get-ManagementScope -Identity $scopeName -ErrorAction SilentlyContinue
 if ($existingScope) {
     Write-Host "  Management Scope '$scopeName' already exists." -ForegroundColor Gray
