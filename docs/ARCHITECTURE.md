@@ -114,5 +114,5 @@ The `DMARCReports_CL` table uses a flat schema — one row per `<record>` elemen
 | Event Grid | ~$0 (100K operations/month free) |
 | Log Analytics (~100-300 MB/month) | ~$0 (5 GB/month free) |
 | Storage Account | ~$0.01 |
-| Key Vault (secret storage + operations) | ~$0.01 |
-| **Total** | **~$0.02** |
+| Key Vault (1 secret + <1K operations/month) | ~$0.03 |
+| **Total** | **~$0.04** |

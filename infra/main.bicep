@@ -44,8 +44,8 @@ var storageName = toLower(take('${baseName}st${uniqueSuffix}', 24))
 var appInsightsName = '${baseName}-ai-${uniqueSuffix}'
 var hostingPlanName = '${baseName}-plan-${uniqueSuffix}'
 var functionAppName = '${baseName}-func-${uniqueSuffix}'
-// Key Vault names must be 3-24 characters. Truncate baseName if needed.
-var keyVaultName = take('${baseName}kv${uniqueSuffix}', 24)
+// Key Vault names must be 3-24 characters. Truncate baseName to preserve full uniqueSuffix.
+var keyVaultName = '${take(baseName, 24 - 2 - length(uniqueSuffix))}kv${uniqueSuffix}'
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
 
