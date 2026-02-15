@@ -40,7 +40,14 @@ try {
             $successCount++
         }
         catch {
-            Write-Warning "Failed to process message $($message.id): $_"
+            $errorRecord = $_
+            Write-Warning "Failed to process message $($message.id): $errorRecord"
+            if ($errorRecord -and $errorRecord.Exception) {
+                Write-Error ("Detailed failure for message {0}: {1}" -f $message.id, $errorRecord.Exception.Message)
+            }
+            if ($errorRecord -and $errorRecord.ScriptStackTrace) {
+                Write-Error $errorRecord.ScriptStackTrace
+            }
             $failCount++
         }
     }
