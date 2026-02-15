@@ -188,6 +188,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   kind: 'StorageV2'
   properties: {
     supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
     minimumTlsVersion: 'TLS1_2'
   }
 }

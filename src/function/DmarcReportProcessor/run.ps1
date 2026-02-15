@@ -8,7 +8,6 @@ param($eventGridEvent, $TriggerMetadata)
 Import-Module "$PSScriptRoot/../modules/DmarcHelpers.psm1" -Force
 
 Write-Information "Event Grid trigger fired. Event type: $($eventGridEvent.eventType)"
-Write-Information "Event data: $($eventGridEvent | ConvertTo-Json -Depth 5 -Compress)"
 
 try {
     # Extract message ID from the change notification
@@ -31,7 +30,7 @@ try {
     if ($expectedClientState) {
         $receivedClientState = $eventGridEvent.data.clientState
         if ($receivedClientState -ne $expectedClientState) {
-            Write-Error "Client state mismatch. Expected: $expectedClientState, Received: $receivedClientState"
+            Write-Error "Client state mismatch. The received client state does not match the expected value."
             return
         }
     }

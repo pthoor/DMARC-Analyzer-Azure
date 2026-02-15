@@ -307,7 +307,16 @@ function ConvertFrom-DmarcXml {
     $records = [System.Collections.Generic.List[hashtable]]::new()
 
     try {
-        $xml = [xml]$XmlContent
+        # Use XmlReaderSettings to prohibit DTD processing (defense against XML bombs)
+        $readerSettings = [System.Xml.XmlReaderSettings]::new()
+        $readerSettings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+        $readerSettings.XmlResolver = $null
+        $stringReader = [System.IO.StringReader]::new($XmlContent)
+        $xmlReader = [System.Xml.XmlReader]::Create($stringReader, $readerSettings)
+        $xml = [System.Xml.XmlDocument]::new()
+        $xml.Load($xmlReader)
+        $xmlReader.Dispose()
+        $stringReader.Dispose()
     }
     catch {
         Write-Warning "Failed to parse DMARC XML: $_"
