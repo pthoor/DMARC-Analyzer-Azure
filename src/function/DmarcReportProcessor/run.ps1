@@ -41,7 +41,14 @@ try {
     $messageId = $resourceData.id
     if (-not $messageId) {
         Write-Error "Could not extract message ID from Event Grid event."
-        Write-Error "Event payload: $($eventGridEvent | ConvertTo-Json -Depth 10)"
+        # Log only non-sensitive identifiers from the Event Grid event.
+        # Do not log clientState or other potentially sensitive fields.
+        $eventSummary = @{
+            Id        = $eventGridEvent.id
+            EventType = $eventGridEvent.eventType
+            Subject   = $eventGridEvent.subject
+        }
+        Write-Error ("Event payload summary (sensitive fields redacted): " + ($eventSummary | ConvertTo-Json -Depth 5))
         return
     }
 
