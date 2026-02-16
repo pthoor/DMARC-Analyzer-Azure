@@ -223,14 +223,19 @@ function Expand-DmarcAttachments {
         }
 
         $name = $attachment.name.ToLower()
-        $contentBytes = [System.Convert]::FromBase64String($attachment.contentBytes)
-
-        if ($contentBytes.Length -gt $script:MaxAttachmentBytes) {
-            Write-Warning "Skipping attachment '$($attachment.name)': size $($contentBytes.Length) bytes exceeds limit of $($script:MaxAttachmentBytes) bytes."
-            continue
-        }
 
         try {
+            $contentBytes = [System.Convert]::FromBase64String($attachment.contentBytes)
+
+            if ($null -eq $contentBytes) {
+                Write-Warning "Skipping attachment '$($attachment.name)': content is null or empty."
+                continue
+            }
+
+            if ($contentBytes.Length -gt $script:MaxAttachmentBytes) {
+                Write-Warning "Skipping attachment '$($attachment.name)': size $($contentBytes.Length) bytes exceeds limit of $($script:MaxAttachmentBytes) bytes."
+                continue
+            }
             if ($name.EndsWith('.zip')) {
                 $xmlContents.AddRange((Expand-ZipAttachment -ContentBytes $contentBytes))
             }
