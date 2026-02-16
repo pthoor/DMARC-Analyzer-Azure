@@ -350,7 +350,7 @@ function Copy-StreamWithLimit {
         if ($bytesRead -eq 0) { break }
         $totalRead += $bytesRead
         if ($totalRead -gt $Limit) {
-            throw "Decompressed size of '$EntryName' exceeds limit of $Limit bytes. Aborting to prevent memory exhaustion."
+            throw "Stream size for '$EntryName' exceeds limit of $Limit bytes. Aborting to prevent memory exhaustion."
         }
         $Destination.Write($buffer, 0, $bytesRead)
     }
