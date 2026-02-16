@@ -46,7 +46,7 @@ var hostingPlanName = '${baseName}-plan-${uniqueSuffix}'
 var functionAppName = '${baseName}-func-${uniqueSuffix}'
 // Key Vault names must be 3-24 characters, all lowercase, start with a letter, and contain only letters, numbers, and '-'.
 var keyVaultBase = toLower(take(baseName, 24 - 2 - length(uniqueSuffix)))
-var keyVaultName = !regex('^[a-z][a-z0-9-]*$', keyVaultBase) ? error('Parameter "baseName" must be suitable for Key Vault naming: start with a letter, contain only letters, numbers, or hyphens, and produce a valid Key Vault name.') : '${keyVaultBase}kv${uniqueSuffix}'
+var keyVaultName = '${keyVaultBase}kv${uniqueSuffix}'
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
 
@@ -76,16 +76,9 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (e
 
 var workspaceId = empty(existingWorkspaceId) ? workspace.id : existingWorkspaceId
 
-// Validates existing workspace resource ID format when provided.
-// Expected format:
-//   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}
-var isExistingWorkspaceIdValid = empty(existingWorkspaceId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.OperationalInsights/workspaces/[^/]+$', existingWorkspaceId))
-
 var resolvedWorkspaceName = empty(existingWorkspaceId)
   ? workspaceName
-  : (isExistingWorkspaceIdValid
-      ? last(split(existingWorkspaceId, '/'))
-      : error('Parameter existingWorkspaceId must be a full resource ID of a Log Analytics workspace, e.g. /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}.'))
+  : last(split(existingWorkspaceId, '/'))
 
 // ── Custom Table ──
 
@@ -264,16 +257,9 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (empty(exis
   dependsOn: empty(existingWorkspaceId) ? [workspace] : []
 }
 
-// Validates existing App Insights resource ID format when provided.
-// Expected format:
-//   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}
-var isExistingAppInsightsIdValid = empty(existingAppInsightsId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Insights/components/[^/]+$', existingAppInsightsId))
-
 var appInsightsConnectionString = empty(existingAppInsightsId)
-  ? appInsights.properties.ConnectionString
-  : (isExistingAppInsightsIdValid
-      ? reference(existingAppInsightsId, '2020-02-02').ConnectionString
-      : error('Parameter existingAppInsightsId must be a full resource ID of an Application Insights component, e.g. /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}.'))
+  ? appInsights!.properties.ConnectionString
+  : reference(existingAppInsightsId, '2020-02-02').ConnectionString
 
 // ── Hosting Plan (Consumption) ──
 
@@ -321,6 +307,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'powershell' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
         { name: 'MAILBOX_USER_ID', value: mailboxUserId }
+        #disable-next-line BCP053
         { name: 'DCR_ENDPOINT', value: dcr.properties.logsIngestion.endpoint }
         { name: 'DCR_IMMUTABLE_ID', value: dcr.properties.immutableId }
         { name: 'DCR_STREAM_NAME', value: streamName }
@@ -410,6 +397,7 @@ resource storageTableDataContributor 'Microsoft.Authorization/roleAssignments@20
 output functionAppName string = functionApp.name
 output functionAppPrincipalId string = functionApp.identity.principalId
 output functionAppDefaultHostName string = functionApp.properties.defaultHostName
+#disable-next-line BCP053
 output dcrEndpoint string = dcr.properties.logsIngestion.endpoint
 output dcrImmutableId string = dcr.properties.immutableId
 output dcrStreamName string = streamName
