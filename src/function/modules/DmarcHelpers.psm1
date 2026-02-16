@@ -274,11 +274,13 @@ function Expand-ZipAttachment {
                 break
             }
 
+            # Increment counter for every entry to prevent CPU/metadata DoS via large numbers of non-XML entries
+            $entriesProcessed++
+
             $entryName = $entry.Name.ToLower()
 
             if ($entryName.EndsWith('.xml')) {
                 $xmlContents.Add((Read-StreamWithLimit -Stream $entry.Open() -Limit $script:MaxDecompressedBytes -EntryName $entry.Name))
-                $entriesProcessed++
             }
             elseif ($entryName.EndsWith('.gz')) {
                 # Handle nested .xml.gz inside .zip
@@ -296,7 +298,6 @@ function Expand-ZipAttachment {
                 finally {
                     $entryStream.Dispose()
                 }
-                $entriesProcessed++
             }
         }
 
