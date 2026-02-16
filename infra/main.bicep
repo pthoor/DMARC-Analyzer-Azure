@@ -44,11 +44,22 @@ var storageName = toLower(take('${baseName}st${uniqueSuffix}', 24))
 var appInsightsName = '${baseName}-ai-${uniqueSuffix}'
 var hostingPlanName = '${baseName}-plan-${uniqueSuffix}'
 var functionAppName = '${baseName}-func-${uniqueSuffix}'
+// Key Vault names must be 3-24 characters, all lowercase, start with a letter, and contain only letters, numbers, and '-'.
+var keyVaultBase = toLower(take(baseName, 24 - 2 - length(uniqueSuffix)))
+var keyVaultName = !regex('^[a-z][a-z0-9-]*$', keyVaultBase) ? error('Parameter "baseName" must be suitable for Key Vault naming: start with a letter, contain only letters, numbers, or hyphens, and produce a valid Key Vault name.') : '${keyVaultBase}kv${uniqueSuffix}'
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
 
 // Monitoring Metrics Publisher role definition ID
 var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
+
+// Key Vault Secrets User role definition ID
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+
+// Storage RBAC role definition IDs (for MI-based storage auth)
+var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 
 // ── Log Analytics Workspace ──
 
@@ -65,10 +76,21 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (e
 
 var workspaceId = empty(existingWorkspaceId) ? workspace.id : existingWorkspaceId
 
+// Validates existing workspace resource ID format when provided.
+// Expected format:
+//   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}
+var isExistingWorkspaceIdValid = empty(existingWorkspaceId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.OperationalInsights/workspaces/[^/]+$', existingWorkspaceId))
+
+var resolvedWorkspaceName = empty(existingWorkspaceId)
+  ? workspaceName
+  : (isExistingWorkspaceIdValid
+      ? last(split(existingWorkspaceId, '/'))
+      : error('Parameter existingWorkspaceId must be a full resource ID of a Log Analytics workspace, e.g. /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.OperationalInsights/workspaces/{name}.'))
+
 // ── Custom Table ──
 
 resource customTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
-  name: '${empty(existingWorkspaceId) ? workspaceName : last(split(existingWorkspaceId, '/'))}/${customTableName}'
+  name: '${resolvedWorkspaceName}/${customTableName}'
   properties: {
     schema: {
       name: customTableName
@@ -190,6 +212,42 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     allowBlobPublicAccess: false
     minimumTlsVersion: 'TLS1_2'
+    defaultToOAuthAuthentication: true
+    // allowSharedKeyAccess cannot be set to false on Consumption plan —
+    // the platform mounts the content share using shared key internally.
+    // Slice 2 (Flex Consumption + private endpoints) will remove this limitation.
+  }
+}
+
+// ── Key Vault ──
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: keyVaultName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enabledForDeployment: false
+    enabledForDiskEncryption: false
+    enabledForTemplateDeployment: false
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 90
+    // Public network access is enabled to avoid the complexity and cost of private endpoints.
+    // Access is controlled via RBAC - only the Function App's managed identity can read secrets.
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+// Store the Graph client state secret in Key Vault
+resource graphClientStateSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'graph-client-state'
+  properties: {
+    value: graphClientState
   }
 }
 
@@ -206,7 +264,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = if (empty(exis
   dependsOn: empty(existingWorkspaceId) ? [workspace] : []
 }
 
-// Validate existing App Insights resource ID format when provided.
+// Validates existing App Insights resource ID format when provided.
 // Expected format:
 //   /subscriptions/{subId}/resourceGroups/{rg}/providers/Microsoft.Insights/components/{name}
 var isExistingAppInsightsIdValid = empty(existingAppInsightsId) || !empty(regex('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Insights/components/[^/]+$', existingAppInsightsId))
@@ -233,6 +291,9 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
 }
 
 // ── Function App ──
+// Implicit dependency on Storage Account via storageAccount.name (MI-based auth)
+// and the remaining storageAccount.listKeys() call for the content share.
+// Bicep resolves these references automatically — no explicit dependsOn needed.
 
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
@@ -247,7 +308,13 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     siteConfig: {
       linuxFxVersion: 'PowerShell|7.4'
       appSettings: [
-        { name: 'AzureWebJobsStorage', value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value}' }
+        // MI-based storage auth — no account key in this setting.
+        // Requires Storage Blob Data Owner, Queue Data Contributor, and Table Data Contributor
+        // RBAC roles on the storage account (assigned below).
+        { name: 'AzureWebJobsStorage__accountName', value: storageAccount.name }
+        // Content share still requires a connection string on Consumption (Y1) plan.
+        // This is a platform limitation; moving to Flex Consumption (Slice 2) removes
+        // this last key dependency and allows allowSharedKeyAccess = false.
         { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value}' }
         { name: 'WEBSITE_CONTENTSHARE', value: functionAppName }
         { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
@@ -257,7 +324,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DCR_ENDPOINT', value: dcr.properties.logsIngestion.endpoint }
         { name: 'DCR_IMMUTABLE_ID', value: dcr.properties.immutableId }
         { name: 'DCR_STREAM_NAME', value: streamName }
-        { name: 'GRAPH_CLIENT_STATE', value: graphClientState }
+        { name: 'GRAPH_CLIENT_STATE', value: '@Microsoft.KeyVault(SecretUri=${graphClientStateSecret.properties.secretUri})' }
         // GRAPH_SUBSCRIPTION_ID is set after running New-GraphSubscription.ps1
       ]
       ftpsState: 'Disabled'
@@ -281,6 +348,63 @@ resource dcrRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
+// ── Role Assignment: Function App → Key Vault Secrets User on Key Vault ──
+
+resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, functionApp.id, keyVaultSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      keyVaultSecretsUserRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ── Role Assignments: Function App → Storage Account (MI-based auth) ──
+// Required for AzureWebJobsStorage__accountName identity-based connection.
+
+resource storageBlobDataOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageBlobDataOwnerRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageBlobDataOwnerRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageQueueDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageQueueDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageQueueDataContributorRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageTableDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageTableDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      storageTableDataContributorRoleId
+    )
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ── Outputs ──
 
 output functionAppName string = functionApp.name
@@ -290,4 +414,6 @@ output dcrEndpoint string = dcr.properties.logsIngestion.endpoint
 output dcrImmutableId string = dcr.properties.immutableId
 output dcrStreamName string = streamName
 output workspaceId string = workspaceId
-output workspaceName string = empty(existingWorkspaceId) ? workspace.name : last(split(existingWorkspaceId, '/'))
+output workspaceName string = resolvedWorkspaceName
+output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri

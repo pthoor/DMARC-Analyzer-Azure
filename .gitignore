@@ -1,5 +1,9 @@
 # Azure Functions
 local.settings.json
+
+# Environment / secrets
+.env
+.env.*
 bin/
 obj/
 .python_packages/

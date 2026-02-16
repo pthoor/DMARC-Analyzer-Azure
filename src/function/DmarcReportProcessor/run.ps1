@@ -10,7 +10,7 @@ Import-Module "$PSScriptRoot/../modules/DmarcHelpers.psm1" -Force
 Write-Information "Event Grid trigger fired. Event type: $($eventGridEvent.eventType)"
 
 try {
-    # Extract message ID from the change notification
+    # Extract resource data from the change notification
     # Event Grid payload from Graph has the resource data in the event body
     $resourceData = $eventGridEvent.data.resourceData
     if (-not $resourceData) {
@@ -18,15 +18,13 @@ try {
         $resourceData = $eventGridEvent.data
     }
 
-    $messageId = $resourceData.id
-    if (-not $messageId) {
-        Write-Error "Could not extract message ID from Event Grid event."
-        Write-Error "Event payload: $($eventGridEvent | ConvertTo-Json -Depth 10)"
-        return
-    }
-
-    # Validate client state if configured
+    # Validate client state — defence-in-depth even though Event Grid delivery
+    # is internal to Azure. If GRAPH_CLIENT_STATE is not set, log a warning
+    # so operators notice the misconfiguration rather than silently skipping.
     $expectedClientState = $env:GRAPH_CLIENT_STATE
+    if (-not $expectedClientState) {
+        Write-Warning "GRAPH_CLIENT_STATE is not configured. Client state validation is disabled — configure this setting to enable notification validation."
+    }
     if ($expectedClientState) {
         # Try to read clientState from the same flexible structure as resourceData
         $receivedClientState = $eventGridEvent.data.clientState
@@ -37,6 +35,21 @@ try {
             Write-Error "Client state mismatch. The received client state does not match the expected value."
             return
         }
+    }
+
+    # Extract message ID from the validated notification
+    $messageId = $resourceData.id
+    if (-not $messageId) {
+        Write-Error "Could not extract message ID from Event Grid event."
+        # Log only non-sensitive identifiers from the Event Grid event.
+        # Do not log clientState or other potentially sensitive fields.
+        $eventSummary = @{
+            Id        = $eventGridEvent.id
+            EventType = $eventGridEvent.eventType
+            Subject   = $eventGridEvent.subject
+        }
+        Write-Error ("Event payload summary (sensitive fields redacted): " + ($eventSummary | ConvertTo-Json -Depth 5))
+        return
     }
 
     Write-Information "Processing message ID: $messageId"
