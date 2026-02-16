@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# DMARC Report Analytics\n\nThis workbook visualizes DMARC aggregate reports ingested from your shared mailbox. Use it to monitor email authentication health, detect potential spoofing, and track compliance across your domains."
+        "json": "# DMARC Report Analytics\n\nThis workbook visualizes DMARC aggregate reports (RUA) ingested from your shared mailbox. Use it to monitor email authentication health, detect potential spoofing, and track compliance across your domains."
       },
       "name": "header"
     },
@@ -110,7 +110,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    DkimPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass'),\n    SpfPass = sumif(MessageCount, PolicyEvaluated_spf == 'pass'),\n    Domains = make_set(Domain)\n    by SourceIP\n| extend\n    DkimPassRate = round(100.0 * DkimPass / Messages, 1),\n    SpfPassRate = round(100.0 * SpfPass / Messages, 1)\n| top 50 by Messages desc\n| project SourceIP, Messages, DkimPassRate, SpfPassRate, Domains",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    DkimPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass'),\n    SpfPass = sumif(MessageCount, PolicyEvaluated_spf == 'pass'),\n    Domains = make_set(Domain)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    DkimPassRate = round(100.0 * DkimPass / Messages, 1),\n    SpfPassRate = round(100.0 * SpfPass / Messages, 1),\n    ASN = tostring(GeoInfo.asn),\n    ASN_Org = tostring(GeoInfo.asn_org),\n    Country = tostring(GeoInfo.country)\n| top 50 by Messages desc\n| project SourceIP, Messages, DkimPassRate, SpfPassRate, ASN, ASN_Org, Country, Domains",
         "size": 0,
         "title": "Top 50 Source IPs",
         "queryType": 0,
@@ -125,7 +125,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    FailedMessages = sum(MessageCount),\n    Domains = make_set(Domain),\n    HeaderFroms = make_set(HeaderFrom)\n    by SourceIP\n| top 25 by FailedMessages desc\n| project SourceIP, FailedMessages, HeaderFroms, Domains",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    FailedMessages = sum(MessageCount),\n    Domains = make_set(Domain),\n    HeaderFroms = make_set(HeaderFrom)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    ASN = tostring(GeoInfo.asn),\n    ASN_Org = tostring(GeoInfo.asn_org),\n    Country = tostring(GeoInfo.country)\n| top 25 by FailedMessages desc\n| project SourceIP, FailedMessages, ASN, ASN_Org, Country, HeaderFroms, Domains",
         "size": 0,
         "title": "Suspicious IPs (Both SPF & DKIM Failing)",
         "queryType": 0,
@@ -136,7 +136,44 @@
     {
       "type": 1,
       "content": {
-        "json": "## SPF & DKIM Alignment"
+        "json": "## Source Geolocation"
+      },
+      "name": "geolocation-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    TotalMessages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    FailedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    Latitude = toreal(GeoInfo.latitude),\n    Longitude = toreal(GeoInfo.longitude),\n    Country = tostring(GeoInfo.country),\n    City = tostring(GeoInfo.city),\n    PassRate = round(100.0 * PassedMessages / TotalMessages, 1)\n| where isnotnull(Latitude) and isnotnull(Longitude)\n| summarize\n    Messages = sum(TotalMessages),\n    PassRate = round(avg(PassRate), 1),\n    IPs = sum(UniqueIPs)\n    by Country, City, Latitude, Longitude\n| project Country, City, Latitude, Longitude, Messages, PassRate, IPs",
+        "size": 0,
+        "title": "Geographic Distribution of Email Sources",
+        "queryType": 0,
+        "visualization": "map",
+        "mapSettings": {
+          "locInfo": "LatLong",
+          "latitude": "Latitude",
+          "longitude": "Longitude",
+          "sizeSettings": "Messages",
+          "sizeAggregation": "Sum",
+          "labelSettings": "Country",
+          "legendMetric": "PassRate",
+          "legendAggregation": "Sum",
+          "itemColorSettings": {
+            "nodeColorField": "PassRate",
+            "colorAggregation": "Sum",
+            "type": "heatmap",
+            "heatmapPalette": "greenRed",
+            "heatmapMin": 0,
+            "heatmapMax": 100
+          }
+        }
+      },
+      "name": "geoip-map"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## SPF & DKIM Analysis"
       },
       "name": "alignment-header"
     },
@@ -177,6 +214,33 @@
       "name": "auth-by-spf-domain"
     },
     {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where isnotempty(DkimSelector)\n| summarize\n    Messages = sum(MessageCount),\n    PassCount = sumif(MessageCount, DkimResult == 'pass'),\n    FailCount = sumif(MessageCount, DkimResult != 'pass'),\n    Domains = make_set(Domain)\n    by DkimSelector, DkimDomain\n| extend PassRate = round(100.0 * PassCount / Messages, 1)\n| top 50 by Messages desc\n| project DkimSelector, DkimDomain, Messages, PassRate, PassCount, FailCount, Domains",
+        "size": 0,
+        "title": "DKIM Results by Selector",
+        "queryType": 0,
+        "visualization": "table",
+        "gridSettings": {
+          "sortBy": [{ "itemKey": "Messages", "sortOrder": 2 }]
+        }
+      },
+      "name": "dkim-by-selector"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| extend\n    DKIM_Alignment = iff(isempty(PolicyPublished_adkim), 'r', PolicyPublished_adkim),\n    SPF_Alignment = iff(isempty(PolicyPublished_aspf), 'r', PolicyPublished_aspf)\n| summarize\n    Messages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass')\n    by DKIM_AlignmentMode = DKIM_Alignment, SPF_AlignmentMode = SPF_Alignment\n| extend\n    PassRate = round(100.0 * PassedMessages / Messages, 1),\n    DKIM_Mode = iff(DKIM_AlignmentMode == 's', 'Strict', 'Relaxed'),\n    SPF_Mode = iff(SPF_AlignmentMode == 's', 'Strict', 'Relaxed')\n| project DKIM_Mode, SPF_Mode, Messages, PassedMessages, PassRate\n| sort by Messages desc",
+        "size": 0,
+        "title": "Alignment Mode Breakdown",
+        "queryType": 0,
+        "visualization": "table"
+      },
+      "name": "alignment-mode-breakdown"
+    },
+    {
       "type": 1,
       "content": {
         "json": "## Reporter Analysis"
@@ -215,6 +279,13 @@
       "name": "domain-compliance-header"
     },
     {
+      "type": 1,
+      "content": {
+        "json": "### DMARC Policy Progression Guidance\n\n**Moving from Monitor to Enforcement:**\n\n- **Current Policy: `p=none` (Monitor Mode)**\n  - ✅ **Safe to move to `p=quarantine`** if:\n    - Pass rate is consistently ≥95-99% for at least 30 days\n    - All legitimate mail sources are authenticated (review Top Source IPs)\n    - No business-critical senders are failing authentication\n  - ⚠️ **Action**: Review suspicious IPs and subdomain discovery before progressing\n\n- **Current Policy: `p=quarantine` (Quarantine Mode)**\n  - ✅ **Safe to move to `p=reject`** if:\n    - Pass rate is consistently ≥99% for at least 30-60 days\n    - Zero complaints from users about legitimate mail in spam/quarantine\n    - All critical business workflows tested and verified\n  - ⚠️ **Action**: Consider starting with `pct=10` then gradually increase\n\n- **Current Policy: `p=reject` (Reject Mode)**\n  - ✅ You've achieved full DMARC enforcement!\n  - 📊 Continue monitoring for new legitimate sources and authentication failures\n  - 🔄 Ensure subdomain policy (`sp=`) is also set appropriately\n\n**Best Practices:**\n- Use `pct=` to apply policy to a percentage of messages during transition\n- Monitor for at least 7-14 days after any policy change\n- Always verify legitimate mail providers (e.g., marketing platforms, CRM systems) are authenticated before enforcing\n- Set up Azure Monitor alerts for authentication failure spikes"
+      },
+      "name": "policy-guidance-text"
+    },
+    {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
@@ -237,6 +308,28 @@
         "visualization": "table"
       },
       "name": "published-policies"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Subdomain Discovery"
+      },
+      "name": "subdomain-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where isnotempty(HeaderFrom)\n| extend Subdomain = tolower(HeaderFrom)\n| summarize\n    Messages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    FailedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    UniqueIPs = dcount(SourceIP),\n    BaseDomains = make_set(Domain)\n    by Subdomain\n| extend PassRate = round(100.0 * PassedMessages / Messages, 1)\n| project Subdomain, Messages, PassRate, FailedMessages, UniqueIPs, FirstSeen, LastSeen, BaseDomains\n| sort by Messages desc\n| take 100",
+        "size": 0,
+        "title": "Observed Subdomains (Top 100)",
+        "queryType": 0,
+        "visualization": "table",
+        "gridSettings": {
+          "sortBy": [{ "itemKey": "Messages", "sortOrder": 2 }]
+        }
+      },
+      "name": "subdomain-discovery"
     },
     {
       "type": 1,
