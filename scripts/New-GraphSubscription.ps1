@@ -24,17 +24,12 @@
 .PARAMETER SubscriptionId
     Azure subscription ID (for Event Grid partner topic).
 
-.PARAMETER GraphClientState
-    The client state secret used to validate notifications.
-    Must match the GRAPH_CLIENT_STATE app setting.
-
 .EXAMPLE
     .\New-GraphSubscription.ps1 `
         -FunctionAppName 'dmarc-func-abc123' `
         -ResourceGroupName 'rg-dmarc' `
         -MailboxUserId '00000000-0000-0000-0000-000000000000' `
-        -SubscriptionId '11111111-1111-1111-1111-111111111111' `
-        -GraphClientState 'my-secret-state'
+        -SubscriptionId '11111111-1111-1111-1111-111111111111'
 
 .NOTES
     Prerequisites:
@@ -60,10 +55,7 @@ param(
     [string]$MailboxUserId,
 
     [Parameter(Mandatory)]
-    [string]$SubscriptionId,
-
-    [Parameter(Mandatory)]
-    [string]$GraphClientState
+    [string]$SubscriptionId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -105,6 +97,29 @@ $proceed = Read-Host "Have you completed these steps? (y/n)"
 if ($proceed -ne 'y') {
     Write-Host "Please complete the prerequisites first." -ForegroundColor Red
     return
+}
+
+# ─────────────────────────────────────────────
+# Retrieve Graph client state secret from Key Vault
+# ─────────────────────────────────────────────
+
+Write-Host "  Retrieving Graph client state secret from Key Vault..." -ForegroundColor Gray
+
+$keyVault = Get-AzKeyVault -ResourceGroupName $ResourceGroupName | Where-Object {
+    $_.VaultName -like "*kv*"
+} | Select-Object -First 1
+
+if (-not $keyVault) {
+    Write-Error "No Key Vault found in resource group '$ResourceGroupName'. Ensure the Bicep deployment has completed successfully."
+    throw
+}
+
+try {
+    $GraphClientState = Get-AzKeyVaultSecret -VaultName $keyVault.VaultName -Name 'graph-client-state' -AsPlainText
+    Write-Host "  Secret retrieved from Key Vault '$($keyVault.VaultName)'" -ForegroundColor Green
+} catch {
+    Write-Error "Failed to retrieve 'graph-client-state' from Key Vault '$($keyVault.VaultName)'. Ensure you have 'Key Vault Secrets User' access. Error: $($_.Exception.Message)"
+    throw
 }
 
 # ─────────────────────────────────────────────

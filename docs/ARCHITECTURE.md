@@ -44,7 +44,16 @@ Azure Monitor Workbook / Microsoft Sentinel Workbook
 
 ### Secret Management
 
-The `graphClientState` secret (used to validate Graph change notifications) is stored in **Azure Key Vault** and referenced in Function App settings using Key Vault references (`@Microsoft.KeyVault(SecretUri=...)`). This ensures the secret is never stored as plain text in application settings.
+The `graphClientState` secret (used to validate Graph change notifications) is managed securely:
+
+1. **At deployment time**: The secret is provided via the `GRAPH_CLIENT_STATE` environment variable and read by the `.bicepparam` file using `readEnvironmentVariable()`. This prevents the secret from being stored in source control or parameter files.
+2. **In Azure**: The secret is stored in **Azure Key Vault** and referenced in Function App settings using Key Vault references (`@Microsoft.KeyVault(SecretUri=...)`). This ensures the secret is never stored as plain text in application settings.
+3. **In scripts**: The `New-GraphSubscription.ps1` script retrieves the secret directly from Key Vault at runtime — no parameter passing required.
+
+> **Tip**: Generate the secret safely without it appearing in PowerShell audit logs:
+> ```powershell
+> $env:GRAPH_CLIENT_STATE = [guid]::NewGuid().ToString()
+> ```
 
 ### Exchange Application RBAC (replaces Application Access Policies)
 

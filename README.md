@@ -69,6 +69,21 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture, data
 
 ### 1. Deploy Azure Resources
 
+First, generate the Graph client state secret and set it as an environment variable. This secret validates Graph change notifications. Using `readEnvironmentVariable()` in the `.bicepparam` file ensures the secret is never stored in source control.
+
+**PowerShell:**
+```powershell
+# Generates a random GUID in-memory — safe even with PowerShell Script Block Logging enabled
+$env:GRAPH_CLIENT_STATE = [guid]::NewGuid().ToString()
+```
+
+**Bash:**
+```bash
+export GRAPH_CLIENT_STATE=$(uuidgen)
+```
+
+Then deploy:
+
 ```bash
 az deployment sub create \
   --location eastus \
@@ -97,8 +112,9 @@ After deployment, run the setup script to create the Graph change notification s
 
 This script:
 1. Validates the Function App and Partner Topic are deployed
-2. Creates a Graph subscription for mailbox change notifications
-3. Configures Event Grid subscription to route events to the Function
+2. Retrieves the Graph client state secret from Key Vault (no manual secret passing needed)
+3. Creates a Graph subscription for mailbox change notifications
+4. Configures Event Grid subscription to route events to the Function
 
 ### 3. Grant Exchange RBAC Permissions
 
@@ -160,7 +176,7 @@ let known = DMARCReports_CL
 DMARCReports_CL
 | where TimeGenerated > ago(1d)
 | where SourceIP !in (known)
-| summarize 
+| summarize
     Messages = sum(MessageCount),
     Domains = make_set(Domain, 10),
     FirstSeen = min(TimeGenerated)
@@ -178,7 +194,7 @@ Detect when the failure rate exceeds 10%:
 ```kql
 DMARCReports_CL
 | where TimeGenerated > ago(1h)
-| summarize 
+| summarize
     Total = sum(MessageCount),
     Failed = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')
 | extend FailRate = 100.0 * Failed / Total
@@ -195,7 +211,7 @@ Detect when overall pass rate drops below 95%:
 ```kql
 DMARCReports_CL
 | where TimeGenerated > ago(6h)
-| summarize 
+| summarize
     Total = sum(MessageCount),
     Passed = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass')
 | extend PassRate = 100.0 * Passed / Total
