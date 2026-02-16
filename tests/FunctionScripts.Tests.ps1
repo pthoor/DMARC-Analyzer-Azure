@@ -171,8 +171,9 @@ Describe 'RenewGraphSubscription/run.ps1' {
 
         It 'Should set new expiration date' {
             $content = Get-Content $scriptPath -Raw
+            # Check expiration is set to 4200 minutes (just under the 4230 max)
             $content | Should -Match 'expirationDateTime'
-            $content | Should -Match 'AddMinutes\(42[0-9]{2}\)'
+            $content | Should -Match 'AddMinutes\(4200\)'
         }
 
         It 'Should use PATCH method to update subscription' {

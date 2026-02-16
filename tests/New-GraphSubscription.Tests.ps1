@@ -79,9 +79,9 @@ Describe 'New-GraphSubscription.ps1' {
 
         It 'Should set appropriate subscription expiration' {
             $content = Get-Content $scriptPath -Raw
-            # Check that expiration is set (max 4230 minutes for mailbox subscriptions)
+            # Check that expiration is set (4200 minutes is used, which is under the 4230 max)
             $content | Should -Match 'expirationDateTime'
-            $content | Should -Match 'AddMinutes\((42[0-9]{2}|4[0-1][0-9]{2})\)'
+            $content | Should -Match 'AddMinutes\(4200\)'
         }
     }
 

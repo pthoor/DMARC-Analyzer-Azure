@@ -280,6 +280,28 @@ If you see errors like "Access Denied" or "Insufficient privileges":
 - **Input Validation**: All report data sanitized before ingestion
 - **RBAC**: All Azure resources secured via Azure RBAC
 
+## Testing
+
+The repository includes comprehensive Pester tests to verify PowerShell scripts work as expected:
+
+```powershell
+# Run all tests
+Invoke-Pester -Path ./tests
+
+# Run with detailed output
+Invoke-Pester -Path ./tests -Output Detailed
+```
+
+### Test Coverage
+- ✅ **114 tests** covering all PowerShell scripts
+- ✅ Module functions (token acquisition, Graph API, XML parsing, attachment extraction)
+- ✅ Setup scripts (New-GraphSubscription.ps1, Grant-MIExchangeRBAC.ps1)
+- ✅ Azure Functions (DmarcReportProcessor, RenewGraphSubscription, CatchupProcessor)
+- ✅ Security validations (DTD protection, size limits, client state validation)
+- ✅ Error handling and logging patterns
+
+See [tests/README.md](tests/README.md) for detailed test documentation.
+
 ## Contributing
 
 Contributions are welcome! Please submit issues or pull requests via GitHub.
