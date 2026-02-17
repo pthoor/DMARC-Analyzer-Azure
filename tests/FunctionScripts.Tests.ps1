@@ -22,7 +22,7 @@ Describe 'DmarcReportProcessor/run.ps1' {
         It 'Should have valid PowerShell syntax' {
             $errors = $null
             $null = [System.Management.Automation.PSParser]::Tokenize(
-                (Get-Content $scriptPath -Raw), 
+                (Get-Content $scriptPath -Raw),
                 [ref]$errors
             )
             $errors | Should -BeNullOrEmpty
@@ -133,7 +133,7 @@ Describe 'RenewGraphSubscription/run.ps1' {
         It 'Should have valid PowerShell syntax' {
             $errors = $null
             $null = [System.Management.Automation.PSParser]::Tokenize(
-                (Get-Content $scriptPath -Raw), 
+                (Get-Content $scriptPath -Raw),
                 [ref]$errors
             )
             $errors | Should -BeNullOrEmpty
@@ -245,7 +245,7 @@ Describe 'CatchupProcessor/run.ps1' {
         It 'Should have valid PowerShell syntax' {
             $errors = $null
             $null = [System.Management.Automation.PSParser]::Tokenize(
-                (Get-Content $scriptPath -Raw), 
+                (Get-Content $scriptPath -Raw),
                 [ref]$errors
             )
             $errors | Should -BeNullOrEmpty
@@ -276,10 +276,10 @@ Describe 'CatchupProcessor/run.ps1' {
             $content | Should -Match 'Get-ManagedIdentityToken'
         }
 
-        It 'Should query for unread messages' {
+        It 'Should query for unread messages via paged helper' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'Get-UnreadMessages'
-            $content | Should -Match 'OlderThanMinutes.*60'
+            $content | Should -Match 'Get-MailboxMessages'
+            $content | Should -Match 'Days.*2'
         }
 
         It 'Should handle no unread messages gracefully' {
@@ -354,6 +354,155 @@ Describe 'CatchupProcessor/run.ps1' {
             $content = Get-Content $scriptPath -Raw
             $content | Should -Match 'Write-Information.*Catchup complete'
             $content | Should -Match 'Processed.*Failed'
+        }
+    }
+}
+
+Describe 'BackfillProcessor/run.ps1' {
+    BeforeAll {
+        $scriptPath = "$PSScriptRoot/../src/function/BackfillProcessor/run.ps1"
+    }
+
+    Context 'Script Structure' {
+        It 'Should exist' {
+            Test-Path $scriptPath | Should -Be $true
+        }
+
+        It 'Should have valid PowerShell syntax' {
+            $errors = $null
+            $null = [System.Management.Automation.PSParser]::Tokenize(
+                (Get-Content $scriptPath -Raw),
+                [ref]$errors
+            )
+            $errors | Should -BeNullOrEmpty
+        }
+
+        It 'Should accept Request parameter' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'param\s*\(.*\$Request'
+        }
+
+        It 'Should import DmarcHelpers module' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Import-Module.*DmarcHelpers'
+        }
+    }
+
+    Context 'Configuration Validation' {
+        It 'Should check for MAILBOX_USER_ID' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match '\$userId.*MAILBOX_USER_ID'
+            $content | Should -Match 'if.*-not.*\$userId'
+        }
+    }
+
+    Context 'Query Parameters' {
+        It 'Should parse days parameter with validation' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Request\.Query\.days'
+            $content | Should -Match '\[int\]::TryParse'
+            $content | Should -Match 'between 1 and 30'
+        }
+
+        It 'Should default days to 7' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match '\$days = 7'
+        }
+
+        It 'Should parse includeRead parameter' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Request\.Query\.includeRead'
+        }
+
+        It 'Should default includeRead to false' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match '\$includeRead = \$false'
+        }
+    }
+
+    Context 'Message Processing' {
+        It 'Should use Get-MailboxMessages with paging' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Get-MailboxMessages'
+        }
+
+        It 'Should pass days and includeRead parameters' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Get-MailboxMessages.*-Days.*\$days'
+            $content | Should -Match '-IncludeRead.*\$includeRead'
+        }
+
+        It 'Should process each message' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'foreach.*\$message.*\$messages'
+            $content | Should -Match 'Invoke-DmarcReportProcessing'
+        }
+
+        It 'Should track success and failure counts' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match '\$successCount'
+            $content | Should -Match '\$failCount'
+        }
+    }
+
+    Context 'HTTP Response' {
+        It 'Should return JSON response with processing summary' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Push-OutputBinding.*Response'
+            $content | Should -Match 'processed'
+            $content | Should -Match 'failed'
+        }
+
+        It 'Should return 400 for invalid days parameter' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'StatusCode.*400'
+        }
+
+        It 'Should return 500 for missing MAILBOX_USER_ID' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'StatusCode.*500'
+        }
+
+        It 'Should return 200 with summary on success' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'StatusCode.*200'
+        }
+    }
+
+    Context 'Error Handling' {
+        It 'Should wrap processing in try-catch' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'try\s*\{'
+            $content | Should -Match 'catch\s*\{'
+        }
+
+        It 'Should handle individual message failures gracefully' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'foreach.*message'
+            $content | Should -Match '(?s)try.*catch'
+        }
+
+        It 'Should continue processing after individual failures' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match '\$failCount\+\+'
+        }
+    }
+
+    Context 'Logging' {
+        It 'Should log backfill start with parameters' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Write-Information.*Backfill started'
+            $content | Should -Match 'days.*includeRead'
+        }
+
+        It 'Should log found message count' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Write-Information.*Found.*message'
+        }
+
+        It 'Should log completion summary' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Backfill complete'
         }
     }
 }

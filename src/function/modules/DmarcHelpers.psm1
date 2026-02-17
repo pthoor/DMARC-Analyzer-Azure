@@ -43,7 +43,10 @@ function Get-ManagedIdentityToken {
         throw [System.InvalidOperationException]::new($msg)
     }
 
-    $tokenUri = "$identityEndpoint?resource=$Resource&api-version=2019-08-01"
+    # URL-encode the resource parameter — values like 'https://graph.microsoft.com'
+    # contain '://' which can break URI parsing on Flex Consumption infrastructure.
+    $encodedResource = [System.Uri]::EscapeDataString($Resource)
+    $tokenUri = "${identityEndpoint}?resource=${encodedResource}&api-version=2019-08-01"
     $headers  = @{ 'X-IDENTITY-HEADER' = $identityHeader }
     try {
         $response = Invoke-RestMethod -Uri $tokenUri -Headers $headers -Method Get
@@ -160,7 +163,7 @@ function Set-MessageRead {
     )
 
     $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages/$MessageId"
-    Invoke-GraphRequest -Uri $uri -Method PATCH -Body @{ isRead = $true } -Token $Token
+    $null = Invoke-GraphRequest -Uri $uri -Method PATCH -Body @{ isRead = $true } -Token $Token
 }
 
 function Get-UnreadMessages {
@@ -186,6 +189,70 @@ function Get-UnreadMessages {
 
     $result = Invoke-GraphRequest -Uri $uri -Token $Token
     return $result.value
+}
+
+function Get-MailboxMessages {
+    <#
+    .SYNOPSIS
+        Gets messages from a mailbox with paging, date range, and optional read-state filter.
+    .DESCRIPTION
+        Queries the Graph API for messages with attachments within a date range.
+        Follows @odata.nextLink for full paging (no 50-message cap).
+        Used by BackfillProcessor for on-demand historical import.
+    .PARAMETER UserId
+        The mailbox user ID (object ID or UPN).
+    .PARAMETER Days
+        How many days back to look. Default 7, max 365.
+    .PARAMETER IncludeRead
+        If true, returns both read and unread messages. Default false (unread only).
+    .PARAMETER Token
+        Pre-acquired Graph API token.
+    .PARAMETER MaxMessages
+        Safety cap to prevent runaway queries. Default 500.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$UserId,
+
+        [ValidateRange(1, 365)]
+        [int]$Days = 7,
+
+        [bool]$IncludeRead = $false,
+
+        [string]$Token,
+
+        [ValidateRange(1, 5000)]
+        [int]$MaxMessages = 500
+    )
+
+    $cutoff = (Get-Date).AddDays(-$Days).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $filter = "receivedDateTime ge $cutoff and hasAttachments eq true"
+    if (-not $IncludeRead) {
+        $filter = "isRead eq false and $filter"
+    }
+
+    $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages?`$filter=$filter&`$orderby=receivedDateTime asc&`$top=50&`$select=id,subject,receivedDateTime,isRead"
+
+    $allMessages = [System.Collections.Generic.List[object]]::new()
+
+    do {
+        $result = Invoke-GraphRequest -Uri $uri -Token $Token
+
+        if ($result.value) {
+            $allMessages.AddRange([object[]]$result.value)
+        }
+
+        # Follow paging link if present
+        $uri = $result.'@odata.nextLink'
+
+        if ($allMessages.Count -ge $MaxMessages) {
+            Write-Warning "Reached max message limit ($MaxMessages). Some messages may not be processed."
+            break
+        }
+    } while ($uri)
+
+    return $allMessages.ToArray()
 }
 
 # ─────────────────────────────────────────────
@@ -237,7 +304,9 @@ function Expand-DmarcAttachments {
                 continue
             }
             if ($name.EndsWith('.zip')) {
-                $xmlContents.AddRange((Expand-ZipAttachment -ContentBytes $contentBytes))
+                foreach ($xml in @(Expand-ZipAttachment -ContentBytes $contentBytes)) {
+                    $xmlContents.Add($xml)
+                }
             }
             elseif ($name.EndsWith('.gz') -or $name.EndsWith('.xml.gz')) {
                 $xmlContents.Add((Expand-GzipAttachment -ContentBytes $contentBytes))
@@ -407,10 +476,10 @@ function ConvertFrom-DmarcXml {
     $readerSettings = [System.Xml.XmlReaderSettings]::new()
     $readerSettings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
     $readerSettings.XmlResolver = $null
-    
+
     $stringReader = $null
     $xmlReader = $null
-    
+
     try {
         $stringReader = [System.IO.StringReader]::new($XmlContent)
         $xmlReader = [System.Xml.XmlReader]::Create($stringReader, $readerSettings)
@@ -692,9 +761,9 @@ function Invoke-DmarcReportProcessing {
     # Parse all XML contents
     $allRecords = [System.Collections.Generic.List[hashtable]]::new()
     foreach ($xmlContent in $xmlContents) {
-        $parsed = ConvertFrom-DmarcXml -XmlContent $xmlContent
-        if ($parsed.Count -gt 0) {
-            $allRecords.AddRange($parsed)
+        $parsed = @(ConvertFrom-DmarcXml -XmlContent $xmlContent)
+        foreach ($rec in $parsed) {
+            $allRecords.Add($rec)
         }
     }
 
@@ -705,7 +774,7 @@ function Invoke-DmarcReportProcessing {
         $batchSize = 500
         $recordsArray = $allRecords.ToArray()
         for ($i = 0; $i -lt $recordsArray.Length; $i += $batchSize) {
-            $batch = $recordsArray | Select-Object -Skip $i -First $batchSize
+            $batch = @($recordsArray | Select-Object -Skip $i -First $batchSize)
             Send-DmarcRecordsToLogAnalytics -Records $batch
             Write-Information "Sent batch: $($batch.Count) records (offset $i)."
         }
@@ -723,6 +792,7 @@ Export-ModuleMember -Function @(
     'Get-MailMessage'
     'Set-MessageRead'
     'Get-UnreadMessages'
+    'Get-MailboxMessages'
     'Expand-DmarcAttachments'
     'ConvertFrom-DmarcXml'
     'Send-DmarcRecordsToLogAnalytics'

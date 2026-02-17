@@ -31,6 +31,7 @@ Describe 'DmarcHelpers Module' {
             $exportedFunctions | Should -Contain 'Get-MailMessage'
             $exportedFunctions | Should -Contain 'Set-MessageRead'
             $exportedFunctions | Should -Contain 'Get-UnreadMessages'
+            $exportedFunctions | Should -Contain 'Get-MailboxMessages'
             $exportedFunctions | Should -Contain 'Expand-DmarcAttachments'
             $exportedFunctions | Should -Contain 'ConvertFrom-DmarcXml'
             $exportedFunctions | Should -Contain 'Send-DmarcRecordsToLogAnalytics'
@@ -267,7 +268,7 @@ Describe 'DmarcHelpers Module' {
         It 'Should handle GZIP attachments' {
             $xmlContent = '<feedback><report_metadata><org_name>test</org_name></report_metadata></feedback>'
             $xmlBytes = [System.Text.Encoding]::UTF8.GetBytes($xmlContent)
-            
+
             # Compress to GZIP
             $memStream = [System.IO.MemoryStream]::new()
             $gzipStream = [System.IO.Compression.GZipStream]::new($memStream, [System.IO.Compression.CompressionMode]::Compress)
@@ -298,7 +299,7 @@ Describe 'DmarcHelpers Module' {
             # Create a very large content exceeding MaxAttachmentBytes
             $largeBytes = [byte[]]::new(26 * 1024 * 1024)  # 26 MB
             $base64 = [System.Convert]::ToBase64String($largeBytes)
-            
+
             $attachment = @{
                 '@odata.type' = '#microsoft.graph.fileAttachment'
                 'name' = 'large.xml'
@@ -341,7 +342,7 @@ Describe 'DmarcHelpers Module' {
             $env:DCR_ENDPOINT = $null
             $env:DCR_IMMUTABLE_ID = 'test'
             $env:DCR_STREAM_NAME = 'test'
-            
+
             $records = @(@{ TestField = 'value' })
             { Send-DmarcRecordsToLogAnalytics -Records $records } | Should -Throw '*DCR*'
         }
@@ -350,7 +351,7 @@ Describe 'DmarcHelpers Module' {
             $env:DCR_ENDPOINT = 'https://test.endpoint'
             $env:DCR_IMMUTABLE_ID = $null
             $env:DCR_STREAM_NAME = 'test'
-            
+
             $records = @(@{ TestField = 'value' })
             { Send-DmarcRecordsToLogAnalytics -Records $records } | Should -Throw '*DCR*'
         }
@@ -359,7 +360,7 @@ Describe 'DmarcHelpers Module' {
             $env:DCR_ENDPOINT = 'https://test.endpoint'
             $env:DCR_IMMUTABLE_ID = 'test-id'
             $env:DCR_STREAM_NAME = $null
-            
+
             $records = @(@{ TestField = 'value' })
             { Send-DmarcRecordsToLogAnalytics -Records $records } | Should -Throw '*DCR*'
         }

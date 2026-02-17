@@ -14,6 +14,27 @@
         "version": "KqlParameterItem/1.0",
         "parameters": [
           {
+            "id": "workspace",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspace",
+            "label": "Log Analytics Workspace",
+            "type": 5,
+            "isRequired": true,
+            "query": "where type =~ \"microsoft.operationalinsights/workspaces\"",
+            "crossComponentResources": [
+              "value::selected"
+            ],
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::1"
+              ],
+              "showDefault": false
+            },
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "value": "value::1"
+          },
+          {
             "id": "timeRange",
             "version": "KqlParameterItem/1.0",
             "name": "TimeRange",
@@ -24,10 +45,22 @@
             },
             "typeSettings": {
               "selectableValues": [
-                { "durationMs": 86400000, "displayName": "Last 1 day" },
-                { "durationMs": 604800000, "displayName": "Last 7 days" },
-                { "durationMs": 2592000000, "displayName": "Last 30 days" },
-                { "durationMs": 7776000000, "displayName": "Last 90 days" }
+                {
+                  "durationMs": 86400000,
+                  "displayName": "Last 1 day"
+                },
+                {
+                  "durationMs": 604800000,
+                  "displayName": "Last 7 days"
+                },
+                {
+                  "durationMs": 2592000000,
+                  "displayName": "Last 30 days"
+                },
+                {
+                  "durationMs": 7776000000,
+                  "displayName": "Last 90 days"
+                }
               ]
             }
           },
@@ -42,10 +75,19 @@
             "delimiter": ",",
             "query": "DMARCReports_CL | distinct Domain | sort by Domain asc",
             "typeSettings": {
-              "additionalResourceOptions": ["value::all"],
+              "additionalResourceOptions": [
+                "value::all"
+              ],
               "selectAllValue": "*"
             },
-            "value": ["value::all"]
+            "value": [
+              "value::all"
+            ],
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
           }
         ]
       },
@@ -68,10 +110,20 @@
         "queryType": 0,
         "visualization": "tiles",
         "tileSettings": {
-          "titleContent": { "columnMatch": "Column1", "formatter": 1 },
-          "leftContent": { "columnMatch": "TotalMessages", "formatter": 12 },
+          "titleContent": {
+            "columnMatch": "Column1",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "TotalMessages",
+            "formatter": 12
+          },
           "showBorder": true
-        }
+        },
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "summary-tiles"
     },
@@ -83,7 +135,11 @@
         "size": 0,
         "title": "Pass/Fail Trend (Daily)",
         "queryType": 0,
-        "visualization": "timechart"
+        "visualization": "timechart",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "pass-fail-trend"
     },
@@ -95,7 +151,11 @@
         "size": 2,
         "title": "Policy Disposition",
         "queryType": 0,
-        "visualization": "piechart"
+        "visualization": "piechart",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "disposition-pie"
     },
@@ -116,8 +176,17 @@
         "queryType": 0,
         "visualization": "table",
         "gridSettings": {
-          "sortBy": [{ "itemKey": "Messages", "sortOrder": 2 }]
-        }
+          "sortBy": [
+            {
+              "itemKey": "Messages",
+              "sortOrder": 2
+            }
+          ]
+        },
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "top-source-ips"
     },
@@ -129,7 +198,11 @@
         "size": 0,
         "title": "Suspicious IPs (Both SPF & DKIM Failing)",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "suspicious-ips"
     },
@@ -166,7 +239,11 @@
             "heatmapMin": 0,
             "heatmapMax": 100
           }
-        }
+        },
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "geoip-map"
     },
@@ -185,7 +262,11 @@
         "size": 2,
         "title": "SPF Results",
         "queryType": 0,
-        "visualization": "piechart"
+        "visualization": "piechart",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "spf-results-pie"
     },
@@ -197,7 +278,11 @@
         "size": 2,
         "title": "DKIM Results",
         "queryType": 0,
-        "visualization": "piechart"
+        "visualization": "piechart",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "dkim-results-pie"
     },
@@ -209,7 +294,11 @@
         "size": 0,
         "title": "Authentication by SPF Domain",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "auth-by-spf-domain"
     },
@@ -223,8 +312,17 @@
         "queryType": 0,
         "visualization": "table",
         "gridSettings": {
-          "sortBy": [{ "itemKey": "Messages", "sortOrder": 2 }]
-        }
+          "sortBy": [
+            {
+              "itemKey": "Messages",
+              "sortOrder": 2
+            }
+          ]
+        },
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "dkim-by-selector"
     },
@@ -236,7 +334,11 @@
         "size": 0,
         "title": "Alignment Mode Breakdown",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "alignment-mode-breakdown"
     },
@@ -255,7 +357,11 @@
         "size": 0,
         "title": "Reports by Provider",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "reports-by-provider"
     },
@@ -267,7 +373,11 @@
         "size": 0,
         "title": "Report Volume Over Time by Provider",
         "queryType": 0,
-        "visualization": "timechart"
+        "visualization": "timechart",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "report-volume-timechart"
     },
@@ -281,7 +391,7 @@
     {
       "type": 1,
       "content": {
-        "json": "### DMARC Policy Progression Guidance\n\n**Moving from Monitor to Enforcement:**\n\n- **Current Policy: `p=none` (Monitor Mode)**\n  - ✅ **Safe to move to `p=quarantine`** if:\n    - Pass rate is consistently ≥95-99% for at least 30 days\n    - All legitimate mail sources are authenticated (review Top Source IPs)\n    - No business-critical senders are failing authentication\n  - ⚠️ **Action**: Review suspicious IPs and subdomain discovery before progressing\n\n- **Current Policy: `p=quarantine` (Quarantine Mode)**\n  - ✅ **Safe to move to `p=reject`** if:\n    - Pass rate is consistently ≥99% for at least 30-60 days\n    - Zero complaints from users about legitimate mail in spam/quarantine\n    - All critical business workflows tested and verified\n  - ⚠️ **Action**: Consider starting with `pct=10` then gradually increase\n\n- **Current Policy: `p=reject` (Reject Mode)**\n  - ✅ You've achieved full DMARC enforcement!\n  - 📊 Continue monitoring for new legitimate sources and authentication failures\n  - 🔄 Ensure subdomain policy (`sp=`) is also set appropriately\n\n**Best Practices:**\n- Use `pct=` to apply policy to a percentage of messages during transition\n- Monitor for at least 7-14 days after any policy change\n- Always verify legitimate mail providers (e.g., marketing platforms, CRM systems) are authenticated before enforcing\n- Set up Azure Monitor alerts for authentication failure spikes"
+        "json": "### DMARC Policy Progression Guidance\n\n**Moving from Monitor to Enforcement:**\n\n- **Current Policy: `p=none` (Monitor Mode)**\n  - \u2705 **Safe to move to `p=quarantine`** if:\n    - Pass rate is consistently \u226595-99% for at least 30 days\n    - All legitimate mail sources are authenticated (review Top Source IPs)\n    - No business-critical senders are failing authentication\n  - \u26a0\ufe0f **Action**: Review suspicious IPs and subdomain discovery before progressing\n\n- **Current Policy: `p=quarantine` (Quarantine Mode)**\n  - \u2705 **Safe to move to `p=reject`** if:\n    - Pass rate is consistently \u226599% for at least 30-60 days\n    - Zero complaints from users about legitimate mail in spam/quarantine\n    - All critical business workflows tested and verified\n  - \u26a0\ufe0f **Action**: Consider starting with `pct=10` then gradually increase\n\n- **Current Policy: `p=reject` (Reject Mode)**\n  - \u2705 You've achieved full DMARC enforcement!\n  - \ud83d\udcca Continue monitoring for new legitimate sources and authentication failures\n  - \ud83d\udd04 Ensure subdomain policy (`sp=`) is also set appropriately\n\n**Best Practices:**\n- Use `pct=` to apply policy to a percentage of messages during transition\n- Monitor for at least 7-14 days after any policy change\n- Always verify legitimate mail providers (e.g., marketing platforms, CRM systems) are authenticated before enforcing\n- Set up Azure Monitor alerts for authentication failure spikes"
       },
       "name": "policy-guidance-text"
     },
@@ -293,7 +403,11 @@
         "size": 0,
         "title": "Per-Domain Compliance",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "domain-compliance"
     },
@@ -305,7 +419,11 @@
         "size": 0,
         "title": "Published DMARC Policies",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "published-policies"
     },
@@ -326,8 +444,17 @@
         "queryType": 0,
         "visualization": "table",
         "gridSettings": {
-          "sortBy": [{ "itemKey": "Messages", "sortOrder": 2 }]
-        }
+          "sortBy": [
+            {
+              "itemKey": "Messages",
+              "sortOrder": 2
+            }
+          ]
+        },
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "subdomain-discovery"
     },
@@ -346,7 +473,11 @@
         "size": 0,
         "title": "Potential Spoofing (Header/Envelope Mismatch + Auth Fail)",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "spoofing-detection"
     },
@@ -358,7 +489,11 @@
         "size": 0,
         "title": "New Source IPs (Last 24h vs Previous 30 Days)",
         "queryType": 0,
-        "visualization": "table"
+        "visualization": "table",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "resourceType": "microsoft.operationalinsights/workspaces"
       },
       "name": "new-source-ips"
     }

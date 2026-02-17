@@ -47,10 +47,11 @@ Describe 'Grant-MIExchangeRBAC.ps1' {
     }
 
     Context 'Managed Identity Operations' {
-        It 'Should retrieve Function App Managed Identity' {
+        It 'Should retrieve Function App Managed Identity via ARM REST' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'Get-AzWebApp.*-Name.*\$FunctionAppName'
-            $content | Should -Match '\.Identity\.PrincipalId'
+            $content | Should -Match 'Invoke-AzRestMethod'
+            $content | Should -Match 'identity'
+            $content | Should -Match 'principalId'
         }
 
         It 'Should validate MI is enabled' {
@@ -59,9 +60,9 @@ Describe 'Grant-MIExchangeRBAC.ps1' {
             $content | Should -Match 'Managed Identity'
         }
 
-        It 'Should get service principal details' {
+        It 'Should get service principal details via Microsoft Graph' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'Get-AzADServicePrincipal.*-ObjectId'
+            $content | Should -Match 'Get-MgServicePrincipal'
         }
     }
 

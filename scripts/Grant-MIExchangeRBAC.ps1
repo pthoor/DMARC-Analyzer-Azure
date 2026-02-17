@@ -28,7 +28,7 @@
 
 .NOTES
     Prerequisites:
-    - Az PowerShell module (for Get-AzADServicePrincipal)
+    - Az.Accounts PowerShell module (for Invoke-AzRestMethod)
     - Microsoft.Graph PowerShell module (for app role assignment)
     - Exchange Online PowerShell module (for Application RBAC)
     - Global Admin or Exchange Admin + Privileged Role Administrator
@@ -58,20 +58,34 @@ Write-Host "══════════════════════�
 
 Write-Host "[1/5] Retrieving Managed Identity details..." -ForegroundColor Yellow
 
-# Get the Function App's MI principal ID
-$functionApp = Get-AzWebApp -Name $FunctionAppName -ResourceGroupName $ResourceGroupName
-$miPrincipalId = $functionApp.Identity.PrincipalId
+# Get the Function App's MI principal ID via ARM REST (avoids Az.Websites dependency)
+$subscriptionId = (Get-AzContext).Subscription.Id
+$appPath = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/${FunctionAppName}?api-version=2024-04-01"
+$appResponse = Invoke-AzRestMethod -Path $appPath -Method GET
+if ($appResponse.StatusCode -ne 200) {
+    throw "Function App '$FunctionAppName' not found in resource group '$ResourceGroupName'."
+}
+$appJson = $appResponse.Content | ConvertFrom-Json
+$miPrincipalId = $appJson.identity.principalId
 
 if (-not $miPrincipalId) {
     throw "Function App '$FunctionAppName' does not have a system-assigned Managed Identity enabled."
 }
 
-# Get the full service principal details (need AppId and ObjectId)
-$miSp = Get-AzADServicePrincipal -ObjectId $miPrincipalId
+Write-Host "  MI Principal ID : $miPrincipalId" -ForegroundColor Gray
+
+# Connect to Microsoft Graph (needed for service principal lookup and role assignment)
+$graphContext = Get-MgContext
+if (-not $graphContext) {
+    Write-Host "  Connecting to Microsoft Graph..." -ForegroundColor Gray
+    Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All'
+}
+
+# Get the full service principal details via Microsoft Graph SDK (need AppId)
+$miSp = Get-MgServicePrincipal -Filter "id eq '$miPrincipalId'"
 $miAppId = $miSp.AppId
 $miObjectId = $miSp.Id
 
-Write-Host "  MI Principal ID : $miPrincipalId" -ForegroundColor Gray
 Write-Host "  MI App ID       : $miAppId" -ForegroundColor Gray
 Write-Host "  MI Object ID    : $miObjectId" -ForegroundColor Gray
 
@@ -80,13 +94,6 @@ Write-Host "  MI Object ID    : $miObjectId" -ForegroundColor Gray
 # ─────────────────────────────────────────────
 
 Write-Host "`n[2/5] Assigning Microsoft Graph app roles to Managed Identity..." -ForegroundColor Yellow
-
-# Connect to Microsoft Graph (if not already)
-$graphContext = Get-MgContext
-if (-not $graphContext) {
-    Write-Host "  Connecting to Microsoft Graph..." -ForegroundColor Gray
-    Connect-MgGraph -Scopes 'AppRoleAssignment.ReadWrite.All'
-}
 
 $graphSpId = (Get-MgServicePrincipal -Filter "appId eq '00000003-0000-0000-c000-000000000000'").Id
 $graphSp = Get-MgServicePrincipal -ServicePrincipalId $graphSpId
@@ -129,7 +136,9 @@ try {
 }
 catch {
     Write-Host "  Connecting to Exchange Online..." -ForegroundColor Gray
-    Connect-ExchangeOnline
+    # Use -Device (device-code flow) to avoid WAM broker, which is unavailable
+    # on Linux and can conflict with the MSAL version loaded by Microsoft.Graph.
+    Connect-ExchangeOnline -Device -ShowBanner:$false
 }
 
 # Check if already exists

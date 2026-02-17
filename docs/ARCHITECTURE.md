@@ -32,7 +32,9 @@ Azure Monitor Workbook / Microsoft Sentinel Workbook
 |---|---|---|
 | `DmarcReportProcessor` | Event Grid | Real-time processing of new DMARC reports |
 | `RenewGraphSubscription` | Timer (every 2h) | Keeps Graph subscription alive (max 4230 min) |
-| `CatchupProcessor` | Timer (daily 06:00 UTC) | Processes any missed unread reports |
+| `CatchupProcessor` | Timer (daily 06:00 UTC) | Processes any missed unread reports (paged) |
+| `BackfillProcessor` | HTTP (admin) | On-demand import of historical DMARC reports |
+| `SetupHelper` | HTTP (admin) | Called by setup script to create Graph subscription via MI |
 
 ## Authentication & Security
 
@@ -48,7 +50,7 @@ The `graphClientState` secret (used to validate Graph change notifications) is m
 
 1. **At deployment time**: The secret is provided via the `GRAPH_CLIENT_STATE` environment variable and read by the `.bicepparam` file using `readEnvironmentVariable()`. This prevents the secret from being stored in source control or parameter files.
 2. **In Azure**: The secret is stored in **Azure Key Vault** and referenced in Function App settings using Key Vault references (`@Microsoft.KeyVault(SecretUri=...)`). This ensures the secret is never stored as plain text in application settings.
-3. **In scripts**: The `New-GraphSubscription.ps1` script retrieves the secret directly from Key Vault at runtime — no parameter passing required.
+3. **At runtime**: The `SetupHelper` function reads the resolved secret from the `GRAPH_CLIENT_STATE` environment variable — no Key Vault access from scripts needed.
 
 > **Tip**: Generate the secret safely without it appearing in PowerShell audit logs:
 > ```powershell
@@ -71,6 +73,8 @@ Uses Event Grid as the delivery mechanism (not webhooks):
 - Built-in retry logic (up to 24 hours)
 - Dead-letter storage for failed deliveries
 - Partner topic auto-created by the Graph subscription
+- Partner configuration deployed via Bicep (no manual Portal authorization needed)
+- Partner topic activation and event subscription handled by `New-GraphSubscription.ps1`
 
 The Graph subscription watches: `users/{mailboxUserId}/mailFolders('Inbox')/messages`
 

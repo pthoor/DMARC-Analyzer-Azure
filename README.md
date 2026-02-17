@@ -62,8 +62,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture, data
 - Azure subscription with permissions to create resources
 - Microsoft 365 tenant with Exchange Online
 - A shared mailbox to receive DMARC reports (e.g., `dmarc@example.com`)
-- Azure CLI or PowerShell Az module
+- Azure CLI
 - PowerShell 7.0+ (for setup scripts)
+- [Azure Functions Core Tools](https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local) (`func` CLI for publishing)
+- PowerShell modules for Step 3 (install once):
+  ```powershell
+  Install-Module Az.Accounts -Scope CurrentUser -Force
+  Install-Module Microsoft.Graph.Authentication, Microsoft.Graph.Applications -Scope CurrentUser -Force
+  Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force
+  ```
 
 ## Deployment
 
@@ -79,16 +86,35 @@ $env:GRAPH_CLIENT_STATE = [guid]::NewGuid().ToString()
 
 **Bash:**
 ```bash
-export GRAPH_CLIENT_STATE=$(uuidgen)
+export GRAPH_CLIENT_STATE=$(cat /proc/sys/kernel/random/uuid)
+```
+
+Then create a new resource group:
+
+**PowerShell:**
+```powershell
+az group create --name "rg-dmarc-prod" --location "eastus"
+```
+
+**Bash:**
+```bash
+az group create --name "rg-dmarc-prod" --location "eastus"
 ```
 
 Then deploy:
 
+```powershell
+az deployment group create `
+  --resource-group "rg-dmarc-prod" `
+  --template-file infra/main.bicep `
+  --parameters infra/main.bicepparam
+```
+
 ```bash
-az deployment sub create \
-  --location eastus \
+az deployment group create \
+  --resource-group "rg-dmarc-prod" \
   --template-file infra/main.bicep \
-  --parameters @infra/main.bicepparam
+  --parameters infra/main.bicepparam
 ```
 
 Or use the Azure Portal to deploy `infra/main.bicep` with custom parameters.
@@ -97,38 +123,105 @@ Or use the Azure Portal to deploy `infra/main.bicep` with custom parameters.
 - `baseName`: Base name for all resources (e.g., "dmarc")
 - `location`: Azure region
 - `mailboxUserId`: Object ID of the shared mailbox user (required)
-- `mailboxEmailAddress`: Email address of the shared mailbox (required)
 - `existingWorkspaceId`: (Optional) Use an existing Log Analytics Workspace
+- `deployPartnerConfig`: (Optional, default `true`) Deploy Event Grid partner configuration for Microsoft Graph API. Set to `false` if you already have a partner configuration in the resource group.
 
-### 2. Configure Microsoft Graph Subscription
+The Bicep deployment automatically authorizes Microsoft Graph API as an Event Grid partner — no manual Portal steps required.
 
-After deployment, run the setup script to create the Graph change notification subscription:
+### 2. Publish Function Code
 
-```powershell
-./scripts/New-GraphSubscription.ps1 `
-  -ResourceGroupName "rg-dmarc-prod" `
-  -FunctionAppName "func-dmarc-xyz123"
+Publish the function app code (including the `SetupHelper` function used in the next step):
+
+```bash
+cd src/function
+func azure functionapp publish <function-app-name> --powershell
 ```
 
-This script:
-1. Validates the Function App and Partner Topic are deployed
-2. Retrieves the Graph client state secret from Key Vault (no manual secret passing needed)
-3. Creates a Graph subscription for mailbox change notifications
-4. Configures Event Grid subscription to route events to the Function
+The function app name is shown in the Bicep deployment output as `functionAppName`.
 
 ### 3. Grant Exchange RBAC Permissions
 
-Grant the Function's Managed Identity permissions to access the shared mailbox:
+Grant the Function's Managed Identity permissions to access the shared mailbox. **This must be done before creating the Graph subscription.**
 
+Requires PowerShell modules: `Az.Accounts`, `Microsoft.Graph.Authentication`, `Microsoft.Graph.Applications`, `ExchangeOnlineManagement` (see Prerequisites).
+
+**PowerShell:**
 ```powershell
 ./scripts/Grant-MIExchangeRBAC.ps1 `
-  -ManagedIdentityObjectId "<object-id>" `
-  -SharedMailboxEmail "dmarc@example.com"
+  -FunctionAppName "dmarc-func-xyz123" `
+  -ResourceGroupName "rg-dmarc-prod" `
+  -MailboxAddress "dmarc@example.com"
 ```
 
-This script creates an Exchange Application RBAC policy scoped to the DMARC mailbox only.
+This assigns Graph `Mail.Read`/`Mail.ReadWrite` app roles and creates an Exchange Application RBAC policy scoped to the DMARC mailbox only.
 
-### 4. Configure DMARC DNS Records
+### 4. Create Graph Subscription
+
+Run the setup script to create the Graph change notification subscription and wire up the Event Grid pipeline.
+
+**PowerShell:**
+```powershell
+./scripts/New-GraphSubscription.ps1 `
+  -FunctionAppName "dmarc-func-xyz123" `
+  -ResourceGroupName "rg-dmarc-prod" `
+  -SubscriptionId "11111111-1111-1111-1111-111111111111"
+```
+
+**Bash:**
+```bash
+./scripts/New-GraphSubscription.sh \
+  --function-app "dmarc-func-xyz123" \
+  --resource-group "rg-dmarc-prod" \
+  --subscription "11111111-1111-1111-1111-111111111111"
+```
+
+The script automates:
+1. Invokes the `SetupHelper` function (uses the MI to create the Graph subscription)
+2. Waits for the Partner Topic, activates it, and creates an Event Subscription
+3. Saves the subscription ID to the Function App settings
+
+### 5. Import Existing DMARC Reports (Optional)
+
+If the DMARC mailbox already contains reports (e.g., you had DNS configured before deploying this solution), you can import them using the `BackfillProcessor` function. This is an admin-secured HTTP endpoint — no public access.
+
+**Retrieve the master host key securely via ARM and trigger the backfill:**
+
+```powershell
+# Get the master key from ARM (no secrets in shell history)
+$keys = az rest --method POST `
+  --uri "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Web/sites/<function-app-name>/host/default/listkeys?api-version=2024-04-01" `
+  --query masterKey -o tsv
+
+# Import the last 7 days of unread messages
+az rest --method POST `
+  --url "https://<function-app-name>.azurewebsites.net/api/BackfillProcessor?days=7" `
+  --headers "x-functions-key=$keys" `
+  --skip-authorization-header
+```
+
+```bash
+# Get the master key from ARM
+KEY=$(az rest --method POST \
+  --uri "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Web/sites/<function-app-name>/host/default/listkeys?api-version=2024-04-01" \
+  --query masterKey -o tsv)
+
+# Import the last 7 days of unread messages
+curl -s -X POST "https://<function-app-name>.azurewebsites.net/api/BackfillProcessor?days=7" \
+  -H "x-functions-key: $KEY"
+```
+
+**Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `days` | `7` | How far back to look (1–365) |
+| `includeRead` | `false` | Set to `true` to re-process already-read messages |
+
+The function returns a JSON summary with `processed`, `failed`, and `skipped` counts. Messages are marked as read after processing, so running it twice is safe — already-processed messages are skipped by default.
+
+> **Tip:** If you have more than 7 days of historical reports, increase the window: `?days=30&includeRead=true`
+
+### 6. Configure DMARC DNS Records
 
 Add or update the `_dmarc` TXT record for your domain to send reports to your shared mailbox:
 
@@ -142,7 +235,7 @@ _dmarc.example.com. IN TXT "v=DMARC1; p=none; rua=mailto:dmarc@example.com; pct=
 - Start with `p=none` (monitor mode) and progressively move to `p=quarantine` or `p=reject` as compliance improves
 - Set `pct=100` to ensure all traffic is reported
 
-### 5. Import the Workbook
+### 7. Import the Workbook
 
 1. Navigate to your Log Analytics Workspace in the Azure Portal
 2. Select **Workbooks** > **+ New**
@@ -267,7 +360,7 @@ The Azure Monitor Workbook (`workbook/dmarc-workbook.json`) provides:
 ### No Data in Workbook
 
 1. **Check Function App logs**: Navigate to Function App → **Functions** → **DmarcReportProcessor** → **Monitor**
-2. **Verify Graph subscription**: Run `./scripts/New-GraphSubscription.ps1 -Validate`
+2. **Verify Graph subscription**: Check Function App → **Configuration** → Confirm `GRAPH_SUBSCRIPTION_ID` is set
 3. **Check shared mailbox**: Ensure DMARC reports are arriving (may take 24-48 hours after DNS change)
 4. **Check Event Grid delivery**: Navigate to Partner Topic → **Metrics** → Check for failed deliveries
 
@@ -309,7 +402,7 @@ Invoke-Pester -Path ./tests -Output Detailed
 ```
 
 ### Test Coverage
-- ✅ **114 tests** covering all PowerShell scripts
+- ✅ **124 tests** covering all PowerShell scripts
 - ✅ Module functions (token acquisition, Graph API, XML parsing, attachment extraction)
 - ✅ Setup scripts (New-GraphSubscription.ps1, Grant-MIExchangeRBAC.ps1)
 - ✅ Azure Functions (DmarcReportProcessor, RenewGraphSubscription, CatchupProcessor)

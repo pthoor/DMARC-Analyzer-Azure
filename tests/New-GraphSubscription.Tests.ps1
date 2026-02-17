@@ -22,7 +22,7 @@ Describe 'New-GraphSubscription.ps1' {
         It 'Should have valid PowerShell syntax' {
             $errors = $null
             $null = [System.Management.Automation.PSParser]::Tokenize(
-                (Get-Content $scriptPath -Raw), 
+                (Get-Content $scriptPath -Raw),
                 [ref]$errors
             )
             $errors | Should -BeNullOrEmpty
@@ -37,9 +37,7 @@ Describe 'New-GraphSubscription.ps1' {
             $content = Get-Content $scriptPath -Raw
             $content | Should -Match '(?s)\[Parameter\(Mandatory\)\].*?\$FunctionAppName'
             $content | Should -Match '(?s)\[Parameter\(Mandatory\)\].*?\$ResourceGroupName'
-            $content | Should -Match '(?s)\[Parameter\(Mandatory\)\].*?\$MailboxUserId'
             $content | Should -Match '(?s)\[Parameter\(Mandatory\)\].*?\$SubscriptionId'
-            $content | Should -Match '(?s)\[Parameter\(Mandatory\)\].*?\$GraphClientState'
         }
 
         It 'Should set ErrorActionPreference to Stop' {
@@ -48,87 +46,137 @@ Describe 'New-GraphSubscription.ps1' {
         }
     }
 
-    Context 'Parameter Validation' {
-        It 'Should validate resource group early in prerequisites' {
+    Context 'Deployment Verification' {
+        It 'Should get default hostname from ARM' {
             $content = Get-Content $scriptPath -Raw
-            # Check that Get-AzResourceGroup is called in the prerequisites section
-            $content | Should -Match 'Get-AzResourceGroup.*-Name.*\$ResourceGroupName'
+            $content | Should -Match 'defaultHostName'
         }
 
-        It 'Should check prerequisite completion before continuing' {
+        It 'Should verify SetupHelper function is deployed' {
             $content = Get-Content $scriptPath -Raw
-            # Check for user confirmation prompt
-            $content | Should -Match 'Read-Host.*completed'
+            $content | Should -Match 'SetupHelper.*-notin.*deployedFunctions'
         }
 
-        It 'Should construct Event Grid notification URL correctly' {
+        It 'Should suggest func publish if function is not deployed' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'func azure functionapp publish'
+        }
+    }
+
+    Context 'Graph Subscription Creation' {
+        It 'Should retrieve master host key via ARM API' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'host/default/listkeys'
+            $content | Should -Match 'masterKey'
+        }
+
+        It 'Should invoke SetupHelper function endpoint' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'api/SetupHelper\?code='
+        }
+
+        It 'Should use hostname from ARM (not hardcoded)' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'defaultHostName'
+            # Should not construct URL with hardcoded .azurewebsites.net
+            $content | Should -Not -Match '\$FunctionAppName\.azurewebsites\.net'
+        }
+
+        It 'Should retry for cold start' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'maxAttempts'
+            $content | Should -Match 'retrying in 15s'
+        }
+
+        It 'Should construct correct notification URL' {
             $content = Get-Content $scriptPath -Raw
             $content | Should -Match 'EventGrid:\?azuresubscriptionid='
-            $content | Should -Match 'resourcegroup='
             $content | Should -Match 'partnertopic='
-            $content | Should -Match 'location='
-        }
-    }
-
-    Context 'Security Considerations' {
-        It 'Should handle GraphClientState securely' {
-            $content = Get-Content $scriptPath -Raw
-            # Verify that clientState is used in the subscription body
-            $content | Should -Match 'clientState.*=.*\$GraphClientState'
         }
 
-        It 'Should set appropriate subscription expiration' {
+        It 'Should set expiration to 4200 minutes' {
             $content = Get-Content $scriptPath -Raw
-            # Check that expiration is set (4200 minutes is used, which is under the 4230 max)
-            $content | Should -Match 'expirationDateTime'
             $content | Should -Match 'AddMinutes\(4200\)'
         }
+
+        It 'Should NOT use Connect-MgGraph or Graph PowerShell SDK' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Not -Match 'Connect-MgGraph'
+            $content | Should -Not -Match 'Invoke-MgGraphRequest'
+        }
     }
 
-    Context 'Graph API Integration' {
-        It 'Should use Microsoft Graph API v1.0' {
+    Context 'Partner Topic Activation' {
+        It 'Should wait for partner topic to appear' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'https://graph\.microsoft\.com/v1\.0'
+            $content | Should -Match 'Waiting for partner topic'
+            $content | Should -Match 'partnerTopics'
         }
 
-        It 'Should create subscription with correct properties' {
+        It 'Should activate the partner topic' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'changeType'
-            $content | Should -Match 'notificationUrl'
-            $content | Should -Match 'resource'
-            $content | Should -Match 'expirationDateTime'
-            $content | Should -Match 'clientState'
+            $content | Should -Match '(?s)partnerTopics.*activate'
         }
 
-        It 'Should save subscription ID to Function App settings' {
+        It 'Should handle timeout' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'did not appear within'
+        }
+    }
+
+    Context 'Event Subscription Creation' {
+        It 'Should create event subscription on partner topic' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'eventSubscriptions/dmarc-report-processor'
+        }
+
+        It 'Should use AzureFunction endpoint targeting DmarcReportProcessor' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'endpointType.*AzureFunction'
+            $content | Should -Match 'functions/DmarcReportProcessor'
+        }
+
+        It 'Should use CloudEventSchemaV1_0 (required by Graph partner topics)' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'CloudEventSchemaV1_0'
+        }
+    }
+
+    Context 'Subscription ID Management' {
+        It 'Should save GRAPH_SUBSCRIPTION_ID to app settings via ARM REST' {
             $content = Get-Content $scriptPath -Raw
             $content | Should -Match 'GRAPH_SUBSCRIPTION_ID'
-            $content | Should -Match 'Set-AzWebApp'
+            $content | Should -Match 'config/appsettings'
         }
 
-        It 'Should verify that subscription ID was saved' {
+        It 'Should NOT use Set-AzWebApp (incompatible with Flex Consumption)' {
             $content = Get-Content $scriptPath -Raw
-            # Check for verification after saving
-            $content | Should -Match 'Get-AzWebApp.*-Name.*\$FunctionAppName'
-            $content | Should -Match 'GRAPH_SUBSCRIPTION_ID.*-eq.*\$graphSubscriptionId'
+            $content | Should -Not -Match 'Set-AzWebApp'
+        }
+
+        It 'Should merge with existing app settings' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'config/appsettings/list'
+            $content | Should -Match 'updatedProperties'
         }
     }
 
     Context 'User Experience' {
-        It 'Should provide clear output messages' {
+        It 'Should display step progress' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'Write-Host'
+            $content | Should -Match '\[1/4\]'
+            $content | Should -Match '\[4/4\]'
         }
 
-        It 'Should provide next steps guidance' {
+        It 'Should display completion message' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'Remaining manual steps'
-            $content | Should -Match 'Activate.*partner topic'
-        }
-
-        It 'Should display created subscription ID' {
-            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Setup complete'
             $content | Should -Match 'Graph subscription ID:'
+        }
+
+        It 'Should not require manual steps or prompts' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Not -Match 'Read-Host'
         }
     }
 }

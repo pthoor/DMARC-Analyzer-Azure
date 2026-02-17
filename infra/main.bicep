@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────────────────────
 // DMARC-to-Sentinel Pipeline — Infrastructure
 // Deploys: Log Analytics, Custom Table, DCR, Storage, App Insights,
-//          Function App (PowerShell 7.4) with Managed Identity,
+//          Function App (PowerShell 7.4, Flex Consumption) with Managed Identity,
 //          and RBAC role assignment for Logs Ingestion.
 // ──────────────────────────────────────────────────────────────
 
@@ -35,6 +35,12 @@ param existingWorkspaceId string = ''
 @description('Optional: Resource ID of an existing Application Insights instance.')
 param existingAppInsightsId string = ''
 
+@description('Deploy Event Grid partner configuration to authorize Microsoft Graph API. Disable if you already have a partner configuration in this resource group with Graph API authorized.')
+param deployPartnerConfig bool = true
+
+@description('Deployment timestamp for partner authorization expiration. Do not set manually.')
+param deploymentTime string = utcNow()
+
 // ── Variables ──
 
 var uniqueSuffix = uniqueString(resourceGroup().id, baseName)
@@ -47,8 +53,10 @@ var functionAppName = '${baseName}-func-${uniqueSuffix}'
 // Key Vault names must be 3-24 characters, all lowercase, start with a letter, and contain only letters, numbers, and '-'.
 var keyVaultBase = toLower(take(baseName, 24 - 2 - length(uniqueSuffix)))
 var keyVaultName = '${keyVaultBase}kv${uniqueSuffix}'
+var dceName = '${baseName}-dce-${uniqueSuffix}'
 var customTableName = 'DMARCReports_CL'
 var streamName = 'Custom-${customTableName}'
+var deploymentContainerName = 'deploymentpackage'
 
 // Monitoring Metrics Publisher role definition ID
 var monitoringMetricsPublisherRoleId = '3913510d-42f4-4e42-8a64-420c390055eb'
@@ -127,13 +135,26 @@ resource customTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01
   dependsOn: empty(existingWorkspaceId) ? [workspace] : []
 }
 
-// ── Data Collection Rule (kind: Direct — built-in logsIngestion endpoint) ──
+// ── Data Collection Endpoint ──
+
+resource dce 'Microsoft.Insights/dataCollectionEndpoints@2023-03-11' = {
+  name: dceName
+  location: location
+  properties: {
+    networkAcls: {
+      publicNetworkAccess: 'Enabled'
+    }
+  }
+}
+
+// ── Data Collection Rule (kind: Direct) ──
 
 resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
   name: dcrName
   location: location
   kind: 'Direct'
   properties: {
+    dataCollectionEndpointId: dce.id
     streamDeclarations: {
       '${streamName}': {
         columns: [
@@ -206,10 +227,17 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     allowBlobPublicAccess: false
     minimumTlsVersion: 'TLS1_2'
     defaultToOAuthAuthentication: true
-    // allowSharedKeyAccess cannot be set to false on Consumption plan —
-    // the platform mounts the content share using shared key internally.
-    // Slice 2 (Flex Consumption + private endpoints) will remove this limitation.
+    // allowSharedKeyAccess must remain true (default) because the Azure Functions
+    // Core Tools CLI (func azure functionapp publish) needs shared key access to
+    // generate SAS tokens for uploading the deployment package to blob storage.
+    // The Function App runtime itself uses Managed Identity (see functionAppConfig
+    // deployment.storage.authentication), but the local CLI tooling cannot use MI.
   }
+}
+
+// Deployment storage container for Flex Consumption plan
+resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  name: '${storageAccount.name}/default/${deploymentContainerName}'
 }
 
 // ── Key Vault ──
@@ -261,14 +289,14 @@ var appInsightsConnectionString = empty(existingAppInsightsId)
   ? appInsights!.properties.ConnectionString
   : reference(existingAppInsightsId, '2020-02-02').ConnectionString
 
-// ── Hosting Plan (Consumption) ──
+// ── Hosting Plan (Flex Consumption) ──
 
-resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
+resource hostingPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: hostingPlanName
   location: location
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'FC1'
+    tier: 'FlexConsumption'
   }
   kind: 'functionapp'
   properties: {
@@ -276,12 +304,11 @@ resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
-// ── Function App ──
-// Implicit dependency on Storage Account via storageAccount.name (MI-based auth)
-// and the remaining storageAccount.listKeys() call for the content share.
-// Bicep resolves these references automatically — no explicit dependsOn needed.
+// ── Function App (Flex Consumption) ──
+// Uses functionAppConfig for runtime, deployment, and scale settings.
+// App settings are defined in a nested config resource.
 
-resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
+resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: functionAppName
   location: location
   kind: 'functionapp,linux'
@@ -292,30 +319,41 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: hostingPlan.id
     httpsOnly: true
     siteConfig: {
-      linuxFxVersion: 'PowerShell|7.4'
-      appSettings: [
-        // MI-based storage auth — no account key in this setting.
-        // Requires Storage Blob Data Owner, Queue Data Contributor, and Table Data Contributor
-        // RBAC roles on the storage account (assigned below).
-        { name: 'AzureWebJobsStorage__accountName', value: storageAccount.name }
-        // Content share still requires a connection string on Consumption (Y1) plan.
-        // This is a platform limitation; moving to Flex Consumption (Slice 2) removes
-        // this last key dependency and allows allowSharedKeyAccess = false.
-        { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};AccountKey=${storageAccount.listKeys().keys[0].value}' }
-        { name: 'WEBSITE_CONTENTSHARE', value: functionAppName }
-        { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' }
-        { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'powershell' }
-        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-        { name: 'MAILBOX_USER_ID', value: mailboxUserId }
-        #disable-next-line BCP053
-        { name: 'DCR_ENDPOINT', value: dcr.properties.logsIngestion.endpoint }
-        { name: 'DCR_IMMUTABLE_ID', value: dcr.properties.immutableId }
-        { name: 'DCR_STREAM_NAME', value: streamName }
-        { name: 'GRAPH_CLIENT_STATE', value: '@Microsoft.KeyVault(SecretUri=${graphClientStateSecret.properties.secretUri})' }
-        // GRAPH_SUBSCRIPTION_ID is set after running New-GraphSubscription.ps1
-      ]
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
+    }
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storageAccount.properties.primaryEndpoints.blob}${deploymentContainerName}'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 100
+        instanceMemoryMB: 2048
+      }
+      runtime: {
+        name: 'powershell'
+        version: '7.4'
+      }
+    }
+  }
+
+  resource configAppSettings 'config' = {
+    name: 'appsettings'
+    properties: {
+      AzureWebJobsStorage__accountName: storageAccount.name
+      APPLICATIONINSIGHTS_CONNECTION_STRING: appInsightsConnectionString
+      MAILBOX_USER_ID: mailboxUserId
+      DCR_ENDPOINT: dce.properties.logsIngestion.endpoint
+      DCR_IMMUTABLE_ID: dcr.properties.immutableId
+      DCR_STREAM_NAME: streamName
+      GRAPH_CLIENT_STATE: '@Microsoft.KeyVault(SecretUri=${graphClientStateSecret.properties.secretUri})'
+      // GRAPH_SUBSCRIPTION_ID is set after running New-GraphSubscription.ps1
     }
   }
 }
@@ -392,13 +430,33 @@ resource storageTableDataContributor 'Microsoft.Authorization/roleAssignments@20
   }
 }
 
+// ── Event Grid Partner Configuration ──
+// Authorizes Microsoft Graph API as an Event Grid partner so that Graph change
+// notification subscriptions can create partner topics in this resource group.
+// This replaces the manual Portal step: Event Grid > Partner Configurations > Authorize.
+
+resource partnerConfiguration 'Microsoft.EventGrid/partnerConfigurations@2022-06-15' = if (deployPartnerConfig) {
+  name: 'default'
+  location: 'global'
+  properties: {
+    partnerAuthorization: {
+      defaultMaximumExpirationTimeInDays: 365
+      authorizedPartnersList: [
+        {
+          partnerName: 'MicrosoftGraphAPI'
+          authorizationExpirationTimeInUtc: dateTimeAdd(deploymentTime, 'P365D')
+        }
+      ]
+    }
+  }
+}
+
 // ── Outputs ──
 
 output functionAppName string = functionApp.name
 output functionAppPrincipalId string = functionApp.identity.principalId
 output functionAppDefaultHostName string = functionApp.properties.defaultHostName
-#disable-next-line BCP053
-output dcrEndpoint string = dcr.properties.logsIngestion.endpoint
+output dcrEndpoint string = dce.properties.logsIngestion.endpoint
 output dcrImmutableId string = dcr.properties.immutableId
 output dcrStreamName string = streamName
 output workspaceId string = workspaceId

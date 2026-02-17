@@ -2,9 +2,8 @@
 # Runs daily to catch any DMARC reports that were missed by the
 # real-time Event Grid pipeline (e.g., during outages, subscription gaps,
 # or Event Grid delivery failures).
-# Checks for unread messages with attachments older than 1 hour.
-# Note: processes up to 50 messages per run (Graph API $top limit).
-# After a prolonged outage, it may take several daily runs to fully catch up.
+# Checks for unread messages with attachments from the last 2 days.
+# Uses paged Graph queries — no longer capped at 50 messages.
 
 param($Timer)
 
@@ -22,8 +21,8 @@ Write-Information "Catchup processor started. Checking for unread DMARC reports.
 try {
     $graphToken = Get-ManagedIdentityToken -Resource 'https://graph.microsoft.com'
 
-    # Find unread messages older than 60 minutes (already should have been processed)
-    $unreadMessages = Get-UnreadMessages -UserId $userId -OlderThanMinutes 60 -Token $graphToken
+    # Find unread messages with attachments from the last 2 days (paged, no 50-message cap)
+    $unreadMessages = Get-MailboxMessages -UserId $userId -Days 2 -IncludeRead $false -Token $graphToken
 
     if (-not $unreadMessages -or $unreadMessages.Count -eq 0) {
         Write-Information "No missed DMARC reports found. All caught up."

@@ -1,0 +1,81 @@
+# SetupHelper - HTTP Trigger (admin auth)
+# Called by New-GraphSubscription.ps1 to create a Graph change notification
+# subscription using the Function App's Managed Identity.
+#
+# This function exists because creating a subscription on another user's
+# mailbox requires application-level Mail.Read — which only the MI has.
+# The setup script (running as the operator) cannot get that permission,
+# so it invokes this function instead.
+#
+# Reads MAILBOX_USER_ID and GRAPH_CLIENT_STATE from app settings (env vars).
+# Accepts notificationUrl and expirationDateTime in the request body.
+
+param($Request)
+
+Import-Module "$PSScriptRoot/../modules/DmarcHelpers.psm1" -Force
+
+try {
+    $body = $Request.Body
+
+    if (-not $body.notificationUrl -or -not $body.expirationDateTime) {
+        Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+            StatusCode  = 400
+            Body        = (@{ error = 'Missing required fields: notificationUrl, expirationDateTime' } | ConvertTo-Json)
+            ContentType = 'application/json'
+        })
+        return
+    }
+
+    $mailboxUserId = $env:MAILBOX_USER_ID
+    $clientState   = $env:GRAPH_CLIENT_STATE
+
+    if (-not $mailboxUserId) {
+        Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+            StatusCode  = 500
+            Body        = (@{ error = 'MAILBOX_USER_ID is not configured in app settings.' } | ConvertTo-Json)
+            ContentType = 'application/json'
+        })
+        return
+    }
+
+    if (-not $clientState) {
+        Write-Warning 'GRAPH_CLIENT_STATE is not configured — subscription will be created without clientState.'
+    }
+    elseif ($clientState -like '@Microsoft.KeyVault*') {
+        Write-Warning "GRAPH_CLIENT_STATE contains an unresolved Key Vault reference. The Function App's MI may not have 'Key Vault Secrets User' role yet, or the role hasn't propagated. Proceeding without clientState."
+        $clientState = $null
+    }
+
+    Write-Information "Creating Graph subscription for user $mailboxUserId"
+
+    $subscriptionBody = @{
+        changeType         = 'created'
+        notificationUrl    = $body.notificationUrl
+        resource           = "users/$mailboxUserId/mailFolders('Inbox')/messages"
+        expirationDateTime = $body.expirationDateTime
+    }
+
+    if ($clientState) {
+        $subscriptionBody['clientState'] = $clientState
+    }
+
+    $graphToken = Get-ManagedIdentityToken -Resource 'https://graph.microsoft.com'
+    $result = Invoke-GraphRequest -Uri 'https://graph.microsoft.com/v1.0/subscriptions' `
+        -Method POST -Body $subscriptionBody -Token $graphToken
+
+    Write-Information "Subscription created: $($result.id)"
+
+    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+        StatusCode  = 200
+        Body        = (@{ subscriptionId = $result.id } | ConvertTo-Json)
+        ContentType = 'application/json'
+    })
+}
+catch {
+    Write-Error "SetupHelper failed: $_"
+    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+        StatusCode  = 500
+        Body        = (@{ error = $_.Exception.Message } | ConvertTo-Json)
+        ContentType = 'application/json'
+    })
+}
