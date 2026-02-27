@@ -379,7 +379,7 @@ For more on Azure Monitor Alerts, see: [Microsoft Docs - Create log alert rules]
 
 ## Workbook Capabilities
 
-The Azure Monitor Workbook (`workbook/dmarc-workbook.json`) is organized into 5 tabs with 43 KQL visualizations:
+The Azure Monitor Workbook (`workbook/dmarc-workbook.json`) is organized into 5 tabs with 42 KQL visualizations:
 
 ### Executive Summary
 - Total message volume, unique source IPs, reporters, pass rate (KPI tiles)
