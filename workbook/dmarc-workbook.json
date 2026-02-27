@@ -148,49 +148,44 @@
         "links": [
           {
             "id": "tab-executive",
-            "cellValue": "executive",
+            "cellValue": "selectedTab",
             "linkTarget": "parameter",
             "linkLabel": "Executive Summary",
-            "subTarget": "selectedTab",
+            "subTarget": "executive",
             "style": "link",
-            "preText": "Executive Summary",
             "isDefault": true
           },
           {
             "id": "tab-authentication",
-            "cellValue": "authentication",
+            "cellValue": "selectedTab",
             "linkTarget": "parameter",
             "linkLabel": "Authentication",
-            "subTarget": "selectedTab",
-            "style": "link",
-            "preText": "Authentication"
+            "subTarget": "authentication",
+            "style": "link"
           },
           {
             "id": "tab-sources",
-            "cellValue": "sources",
+            "cellValue": "selectedTab",
             "linkTarget": "parameter",
             "linkLabel": "Sources & Senders",
-            "subTarget": "selectedTab",
-            "style": "link",
-            "preText": "Sources & Senders"
+            "subTarget": "sources",
+            "style": "link"
           },
           {
             "id": "tab-domain",
-            "cellValue": "domain",
+            "cellValue": "selectedTab",
             "linkTarget": "parameter",
             "linkLabel": "Domain Compliance",
-            "subTarget": "selectedTab",
-            "style": "link",
-            "preText": "Domain Compliance"
+            "subTarget": "domain",
+            "style": "link"
           },
           {
             "id": "tab-reporting",
-            "cellValue": "reporting",
+            "cellValue": "selectedTab",
             "linkTarget": "parameter",
             "linkLabel": "Reporting & Ops",
-            "subTarget": "selectedTab",
-            "style": "link",
-            "preText": "Reporting & Ops"
+            "subTarget": "reporting",
+            "style": "link"
           }
         ]
       },
