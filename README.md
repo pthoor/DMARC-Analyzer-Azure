@@ -227,17 +227,67 @@ The function returns a JSON summary with `processed`, `failed`, and `skipped` co
 
 ### 6. Configure DMARC DNS Records
 
-Add or update the `_dmarc` TXT record for your domain to send reports to your shared mailbox:
+Add or update the `_dmarc` TXT record for your domain to send reports to your shared mailbox.
 
+**Recommended starting record:**
 ```dns
-_dmarc.example.com. IN TXT "v=DMARC1; p=none; rua=mailto:dmarc@example.com; pct=100; sp=none"
+_dmarc.example.com. IN TXT "v=DMARC1; p=none; rua=mailto:dmarc@example.com; adkim=r; aspf=r; pct=100; fo=1"
 ```
 
-**Important Notes:**
-- Use `rua=mailto:...` to specify the aggregate report recipient (this tool)
-- Do NOT configure `ruf=mailto:...` — forensic reports are not supported and not recommended
-- Start with `p=none` (monitor mode) and progressively move to `p=quarantine` or `p=reject` as compliance improves
-- Set `pct=100` to ensure all traffic is reported
+#### DMARC Record Tags Explained
+
+| Tag | Required | Example | Description |
+|-----|----------|---------|-------------|
+| `v` | Yes | `v=DMARC1` | Protocol version. Must be `DMARC1` and must be the first tag. |
+| `p` | Yes | `p=none` | **Policy** for the domain. Tells receiving servers what to do with messages that fail DMARC. See [Policy Progression](#policy-progression) below. |
+| `rua` | No* | `rua=mailto:dmarc@example.com` | **Aggregate report recipients.** Where to send daily XML reports. *Required for this solution to receive data.* Multiple addresses supported: `rua=mailto:a@example.com,mailto:b@example.com` |
+| `sp` | No | `sp=none` | **Subdomain policy.** Overrides `p` for subdomains (e.g., `sub.example.com`). If omitted, subdomains inherit the `p` policy. Useful when you want a stricter policy on the root domain but need to monitor subdomains separately. |
+| `adkim` | No | `adkim=r` | **DKIM alignment mode.** `r` = relaxed (default, recommended) — the DKIM signing domain can be a subdomain of the Header From domain. `s` = strict — must be an exact match. |
+| `aspf` | No | `aspf=r` | **SPF alignment mode.** `r` = relaxed (default, recommended) — the envelope from domain can be a subdomain of the Header From domain. `s` = strict — must be an exact match. |
+| `pct` | No | `pct=100` | **Percentage** of messages subject to the policy (1–100). Defaults to 100. Can be used to gradually roll out `quarantine` or `reject` (e.g., start with `pct=10` and increase). Has no effect when `p=none`. |
+| `fo` | No | `fo=1` | **Failure reporting options.** `0` = report only if both SPF and DKIM fail (default). `1` = report if either SPF or DKIM fails (recommended — provides better visibility). `d` = DKIM failure only. `s` = SPF failure only. |
+| `ruf` | No | — | **Forensic report recipients.** Not recommended — see note below. |
+| `ri` | No | `ri=86400` | **Reporting interval** in seconds. Defaults to 86400 (24 hours). Most providers ignore this and send daily regardless. |
+
+> **Note on `ruf`:** Do NOT configure `ruf=mailto:...` — forensic/failure reports (RUF) are not supported by this tool and are not recommended. Most major providers (Google, Microsoft) no longer send them due to privacy concerns. Focus on `rua` for aggregate reports.
+
+#### Policy Progression
+
+DMARC policy progression is a journey — rushing to `reject` without data can break legitimate email delivery. Use this workbook to monitor your domain and progress through these stages:
+
+**Stage 1: Monitor (`p=none`)** — Start here
+```dns
+_dmarc.example.com. IN TXT "v=DMARC1; p=none; rua=mailto:dmarc@example.com; adkim=r; aspf=r; pct=100; fo=1"
+```
+- No email is blocked or quarantined — receiving servers deliver everything normally
+- Reports flow into this solution so you can see who is sending email as your domain
+- **Goal:** Identify all legitimate senders (your mail servers, marketing platforms, CRM, ticketing systems, etc.)
+- **Duration:** Typically 2–4 weeks minimum. Stay here until you can account for all authorized senders
+- **What to look for in the workbook:**
+  - **Sources & Senders tab:** Review all source IPs — are they all recognized services?
+  - **Authentication tab:** Are SPF and DKIM passing for your legitimate senders?
+  - **Domain Compliance tab:** Check subdomain discovery for shadow IT or forgotten services
+
+**Stage 2: Quarantine (`p=quarantine`)** — When legitimate senders all pass
+```dns
+_dmarc.example.com. IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com; adkim=r; aspf=r; pct=25; fo=1"
+```
+- Messages that fail DMARC are delivered to the recipient's spam/junk folder
+- Start with `pct=25` — only 25% of failing messages are quarantined, the rest are still delivered normally
+- **Move here when:** All legitimate senders consistently show SPF and/or DKIM pass in the workbook (aim for >95% overall pass rate)
+- **Gradually increase `pct`:** `25` → `50` → `75` → `100` over a few weeks while monitoring for issues
+- **Watch for:** Any legitimate email landing in spam — check the workbook for new failures after each `pct` increase
+
+**Stage 3: Reject (`p=reject`)** — Full protection
+```dns
+_dmarc.example.com. IN TXT "v=DMARC1; p=reject; rua=mailto:dmarc@example.com; adkim=r; aspf=r; pct=100; fo=1"
+```
+- Messages that fail DMARC are rejected outright — they are never delivered
+- This is the strongest protection against domain spoofing and phishing
+- **Move here when:** You have been at `p=quarantine; pct=100` for several weeks with no legitimate email being affected
+- **Use `pct` again if cautious:** Start with `p=reject; pct=10` and increase gradually
+
+> **Tip:** The **Domain Compliance** tab in the workbook includes a policy readiness assessment that helps you determine when your domain is ready to move to the next stage. Look for consistent >99% pass rates across all legitimate senders before progressing to `reject`.
 
 ### 7. Import the Workbook
 
