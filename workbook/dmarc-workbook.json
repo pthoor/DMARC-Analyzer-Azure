@@ -193,7 +193,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\nlet stats = data\n| summarize\n    TotalMessages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    DomainsMonitored = dcount(Domain),\n    UniqueIPs = dcount(SourceIP),\n    UniqueReporters = dcount(ReportOrgName);\nlet policyStats = data\n| summarize arg_max(TimeGenerated, PolicyPublished_p) by Domain\n| summarize\n    EnforcedDomains = countif(PolicyPublished_p in ('quarantine', 'reject')),\n    TotalDomains = count();\nstats | extend x = 1\n| join kind=inner (policyStats | extend x = 1) on x\n| extend\n    PassRate = round(100.0 * Pass / TotalMessages, 1),\n    EnforcementPct = round(100.0 * EnforcedDomains / TotalDomains, 1)\n| project TotalMessages, PassRate, DomainsMonitored, EnforcementPct, UniqueIPs, UniqueReporters",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\nlet stats = data\n| summarize\n    TotalMessages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    DomainsMonitored = dcount(Domain),\n    UniqueIPs = dcount(SourceIP),\n    UniqueReporters = dcount(ReportOrgName);\nlet policyStats = data\n| summarize arg_max(TimeGenerated, PolicyPublished_p) by Domain\n| summarize\n    EnforcedDomains = countif(PolicyPublished_p in ('quarantine', 'reject')),\n    TotalDomains = count();\nlet combined = stats | extend x = 1\n| join kind=inner (policyStats | extend x = 1) on x\n| extend\n    PassRate = round(100.0 * Pass / TotalMessages, 1),\n    EnforcementPct = round(100.0 * EnforcedDomains / TotalDomains, 1);\nunion\n    (combined | project Metric=\"Total Messages\", Value=tostring(TotalMessages)),\n    (combined | project Metric=\"Pass Rate %\", Value=tostring(PassRate)),\n    (combined | project Metric=\"Domains Monitored\", Value=tostring(DomainsMonitored)),\n    (combined | project Metric=\"Enforcement %\", Value=tostring(EnforcementPct)),\n    (combined | project Metric=\"Unique IPs\", Value=tostring(UniqueIPs)),\n    (combined | project Metric=\"Unique Reporters\", Value=tostring(UniqueReporters))",
               "size": 4,
               "title": "Key Metrics",
               "queryType": 0,
@@ -204,11 +204,11 @@
               "resourceType": "microsoft.operationalinsights/workspaces",
               "tileSettings": {
                 "titleContent": {
-                  "columnMatch": "TotalMessages",
+                  "columnMatch": "Metric",
                   "formatter": 1
                 },
                 "leftContent": {
-                  "columnMatch": "TotalMessages",
+                  "columnMatch": "Value",
                   "formatter": 12,
                   "formatOptions": {
                     "palette": "auto"
