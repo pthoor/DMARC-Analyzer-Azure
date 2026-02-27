@@ -485,12 +485,6 @@ Contributions are welcome! Please submit issues or pull requests via GitHub.
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
-
-- Microsoft Graph API and Event Grid teams
-- Azure Monitor and Log Analytics teams
-- The DMARC community
-
 ## Support
 
 For issues, questions, or feature requests, please open a GitHub issue.
