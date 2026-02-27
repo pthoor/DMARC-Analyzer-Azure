@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# DMARC Report Analytics\n\nThis workbook visualizes DMARC aggregate reports (RUA) ingested from your shared mailbox. Use it to monitor email authentication health, detect potential spoofing, and track compliance across your domains."
+        "json": "# DMARC Report Analytics\n\nThis workbook provides comprehensive DMARC analytics with visualizations across 5 tabs. Monitor email authentication health, detect spoofing, track compliance scores, analyze senders, and plan policy enforcement across your domains. Filter by domain, reporter, and time range."
       },
       "name": "header"
     },
@@ -88,414 +88,1556 @@
             ],
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "reporter",
+            "version": "KqlParameterItem/1.0",
+            "name": "Reporter",
+            "type": 2,
+            "isRequired": false,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "DMARCReports_CL | distinct ReportOrgName | sort by ReportOrgName asc",
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "selectAllValue": "*"
+            },
+            "value": [
+              "value::all"
+            ],
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "selectedTab",
+            "version": "KqlParameterItem/1.0",
+            "name": "selectedTab",
+            "type": 1,
+            "isRequired": false,
+            "isHiddenWhenLocked": true,
+            "value": "executive"
           }
         ]
       },
       "name": "parameters"
     },
     {
-      "type": 1,
+      "type": 11,
       "content": {
-        "json": "## Overview"
-      },
-      "name": "overview-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    TotalMessages = sum(MessageCount),\n    TotalRecords = count(),\n    UniqueSourceIPs = dcount(SourceIP),\n    UniqueReporters = dcount(ReportOrgName),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')\n| extend PassRate = iff(TotalMessages > 0, round(100.0 * Pass / TotalMessages, 1), 0.0)\n| project TotalMessages, TotalRecords, UniqueSourceIPs, UniqueReporters, PassRate",
-        "size": 4,
-        "title": "Summary",
-        "queryType": 0,
-        "visualization": "tiles",
-        "tileSettings": {
-          "titleContent": {
-            "columnMatch": "Column1",
-            "formatter": 1
+        "version": "LinkItem/1.0",
+        "style": "tabs",
+        "links": [
+          {
+            "id": "tab-executive",
+            "cellValue": "executive",
+            "linkTarget": "parameter",
+            "linkLabel": "Executive Summary",
+            "subTarget": "selectedTab",
+            "style": "link",
+            "preText": "Executive Summary",
+            "isDefault": true
           },
-          "leftContent": {
-            "columnMatch": "TotalMessages",
-            "formatter": 12
+          {
+            "id": "tab-authentication",
+            "cellValue": "authentication",
+            "linkTarget": "parameter",
+            "linkLabel": "Authentication",
+            "subTarget": "selectedTab",
+            "style": "link",
+            "preText": "Authentication"
           },
-          "showBorder": true
-        },
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "summary-tiles"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')\n    by bin(TimeGenerated, 1d)\n| sort by TimeGenerated asc",
-        "size": 0,
-        "title": "Pass/Fail Trend (Daily)",
-        "queryType": 0,
-        "visualization": "timechart",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "pass-fail-trend"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Messages = sum(MessageCount) by PolicyEvaluated_disposition\n| sort by Messages desc",
-        "size": 2,
-        "title": "Policy Disposition",
-        "queryType": 0,
-        "visualization": "piechart",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "disposition-pie"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Source IP Analysis"
-      },
-      "name": "source-ip-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    DkimPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass'),\n    SpfPass = sumif(MessageCount, PolicyEvaluated_spf == 'pass'),\n    Domains = make_set(Domain)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    DkimPassRate = round(100.0 * DkimPass / Messages, 1),\n    SpfPassRate = round(100.0 * SpfPass / Messages, 1),\n    ASN = tostring(GeoInfo.asn),\n    ASN_Org = tostring(GeoInfo.asn_org),\n    Country = tostring(GeoInfo.country)\n| top 50 by Messages desc\n| project SourceIP, Messages, DkimPassRate, SpfPassRate, ASN, ASN_Org, Country, Domains",
-        "size": 0,
-        "title": "Top 50 Source IPs",
-        "queryType": 0,
-        "visualization": "table",
-        "gridSettings": {
-          "sortBy": [
-            {
-              "itemKey": "Messages",
-              "sortOrder": 2
-            }
-          ]
-        },
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "top-source-ips"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    FailedMessages = sum(MessageCount),\n    Domains = make_set(Domain),\n    HeaderFroms = make_set(HeaderFrom)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    ASN = tostring(GeoInfo.asn),\n    ASN_Org = tostring(GeoInfo.asn_org),\n    Country = tostring(GeoInfo.country)\n| top 25 by FailedMessages desc\n| project SourceIP, FailedMessages, ASN, ASN_Org, Country, HeaderFroms, Domains",
-        "size": 0,
-        "title": "Suspicious IPs (Both SPF & DKIM Failing)",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "suspicious-ips"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Source Geolocation"
-      },
-      "name": "geolocation-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    TotalMessages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    FailedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    Latitude = toreal(GeoInfo.latitude),\n    Longitude = toreal(GeoInfo.longitude),\n    Country = tostring(GeoInfo.country),\n    City = tostring(GeoInfo.city),\n    PassRate = round(100.0 * PassedMessages / TotalMessages, 1)\n| where isnotnull(Latitude) and isnotnull(Longitude)\n| summarize\n    Messages = sum(TotalMessages),\n    PassRate = round(avg(PassRate), 1),\n    IPs = sum(UniqueIPs)\n    by Country, City, Latitude, Longitude\n| project Country, City, Latitude, Longitude, Messages, PassRate, IPs",
-        "size": 0,
-        "title": "Geographic Distribution of Email Sources",
-        "queryType": 0,
-        "visualization": "map",
-        "mapSettings": {
-          "locInfo": "LatLong",
-          "latitude": "Latitude",
-          "longitude": "Longitude",
-          "sizeSettings": "Messages",
-          "sizeAggregation": "Sum",
-          "labelSettings": "Country",
-          "legendMetric": "PassRate",
-          "legendAggregation": "Sum",
-          "itemColorSettings": {
-            "nodeColorField": "PassRate",
-            "colorAggregation": "Sum",
-            "type": "heatmap",
-            "heatmapPalette": "greenRed",
-            "heatmapMin": 0,
-            "heatmapMax": 100
+          {
+            "id": "tab-sources",
+            "cellValue": "sources",
+            "linkTarget": "parameter",
+            "linkLabel": "Sources & Senders",
+            "subTarget": "selectedTab",
+            "style": "link",
+            "preText": "Sources & Senders"
+          },
+          {
+            "id": "tab-domain",
+            "cellValue": "domain",
+            "linkTarget": "parameter",
+            "linkLabel": "Domain Compliance",
+            "subTarget": "selectedTab",
+            "style": "link",
+            "preText": "Domain Compliance"
+          },
+          {
+            "id": "tab-reporting",
+            "cellValue": "reporting",
+            "linkTarget": "parameter",
+            "linkLabel": "Reporting & Ops",
+            "subTarget": "selectedTab",
+            "style": "link",
+            "preText": "Reporting & Ops"
           }
-        },
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        ]
       },
-      "name": "geoip-map"
+      "name": "tabs"
     },
     {
-      "type": 1,
+      "type": 12,
       "content": {
-        "json": "## SPF & DKIM Analysis"
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\nlet stats = data\n| summarize\n    TotalMessages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    DomainsMonitored = dcount(Domain),\n    UniqueIPs = dcount(SourceIP),\n    UniqueReporters = dcount(ReportOrgName);\nlet policyStats = data\n| summarize arg_max(TimeGenerated, PolicyPublished_p) by Domain\n| summarize\n    EnforcedDomains = countif(PolicyPublished_p in ('quarantine', 'reject')),\n    TotalDomains = count();\nstats | extend x = 1\n| join kind=inner (policyStats | extend x = 1) on x\n| extend\n    PassRate = round(100.0 * Pass / TotalMessages, 1),\n    EnforcementPct = round(100.0 * EnforcedDomains / TotalDomains, 1)\n| project TotalMessages, PassRate, DomainsMonitored, EnforcementPct, UniqueIPs, UniqueReporters",
+              "size": 4,
+              "title": "Key Metrics",
+              "queryType": 0,
+              "visualization": "tiles",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "TotalMessages",
+                  "formatter": 1
+                },
+                "leftContent": {
+                  "columnMatch": "TotalMessages",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "auto"
+                  }
+                },
+                "showBorder": true
+              }
+            },
+            "name": "exec-kpi-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet thisWeek = DMARCReports_CL\n| where TimeGenerated > ago(7d)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    TW_Messages = sum(MessageCount),\n    TW_Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    TW_Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    TW_UniqueIPs = dcount(SourceIP);\nlet lastWeek = DMARCReports_CL\n| where TimeGenerated between (ago(14d) .. ago(7d))\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    LW_Messages = sum(MessageCount),\n    LW_Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    LW_Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    LW_UniqueIPs = dcount(SourceIP);\nthisWeek | extend x = 1\n| join kind=inner (lastWeek | extend x = 1) on x\n| project-away x, x1\n| extend\n    TW_PassRate = round(100.0 * TW_Pass / TW_Messages, 1),\n    LW_PassRate = round(100.0 * LW_Pass / LW_Messages, 1),\n    MsgChange = iff(LW_Messages > 0, round(100.0 * (TW_Messages - LW_Messages) / LW_Messages, 1), 0.0),\n    FailChange = TW_Fail - LW_Fail,\n    IPChange = TW_UniqueIPs - LW_UniqueIPs\n| extend PassRateChange = round(TW_PassRate - LW_PassRate, 1)\n| project\n    PassRate = strcat(TW_PassRate, '% (', iff(PassRateChange >= 0, '+', ''), PassRateChange, '%)'),\n    Volume = strcat(TW_Messages, ' (', iff(MsgChange >= 0, '+', ''), MsgChange, '%)'),\n    Failures = strcat(TW_Fail, ' (', iff(FailChange >= 0, '+', ''), FailChange, ')'),\n    UniqueIPs = strcat(TW_UniqueIPs, ' (', iff(IPChange >= 0, '+', ''), IPChange, ')')",
+              "size": 4,
+              "title": "Week-over-Week Comparison",
+              "queryType": 0,
+              "visualization": "tiles",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "PassRate",
+                  "formatter": 1
+                },
+                "showBorder": true
+              }
+            },
+            "name": "wow-comparison"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\ndata\n| summarize\n    DmarcPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    SpfPass = sumif(MessageCount, PolicyEvaluated_spf == 'pass'),\n    DkimPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass'),\n    Total = sum(MessageCount)\n    by bin(TimeGenerated, 1d)\n| extend\n    DmarcPassRate = round(100.0 * DmarcPass / Total, 1),\n    SpfPassRate = round(100.0 * SpfPass / Total, 1),\n    DkimPassRate = round(100.0 * DkimPass / Total, 1)\n| project TimeGenerated, DmarcPassRate, SpfPassRate, DkimPassRate\n| sort by TimeGenerated asc",
+              "size": 0,
+              "title": "Compliance Rate Trend (Daily)",
+              "queryType": 0,
+              "visualization": "timechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "compliance-trend"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')\n    by bin(TimeGenerated, 1d)\n| sort by TimeGenerated asc",
+              "size": 0,
+              "title": "Pass/Fail Trend (Daily)",
+              "queryType": 0,
+              "visualization": "timechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "pass-fail-trend"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\nlet policies = data\n| summarize arg_max(TimeGenerated, PolicyPublished_p) by Domain\n| project Domain, PolicyPublished_p;\ndata\n| summarize\n    Messages = sum(MessageCount),\n    DmarcPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    SpfPassCount = sumif(MessageCount, PolicyEvaluated_spf == 'pass'),\n    DkimPassCount = sumif(MessageCount, PolicyEvaluated_dkim == 'pass')\n    by Domain\n| join kind=leftouter policies on Domain\n| extend\n    PassRate = round(100.0 * DmarcPass / Messages, 1),\n    ComplianceScore = round(\n        0.40 * (100.0 * DmarcPass / Messages)\n        + 0.25 * (100.0 * SpfPassCount / Messages)\n        + 0.25 * (100.0 * DkimPassCount / Messages)\n        + 0.10 * case(PolicyPublished_p == 'reject', 100.0, PolicyPublished_p == 'quarantine', 60.0, PolicyPublished_p == 'none', 20.0, 0.0)\n    , 0)\n| extend\n    RiskLevel = case(\n        ComplianceScore >= 90, 'Low',\n        ComplianceScore >= 70, 'Moderate',\n        ComplianceScore >= 50, 'High',\n        'Critical'\n    )\n| project Domain, ComplianceScore, RiskLevel, PassRate, Policy=PolicyPublished_p, Messages\n| sort by ComplianceScore asc",
+              "size": 0,
+              "title": "Per-Domain Risk Level",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "ComplianceScore",
+                    "formatter": 8,
+                    "formatOptions": {
+                      "palette": "redGreen"
+                    }
+                  },
+                  {
+                    "columnMatch": "RiskLevel",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Low",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Moderate",
+                          "representation": "yellow",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "High",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Critical",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "ComplianceScore",
+                    "sortOrder": 1
+                  }
+                ]
+              }
+            },
+            "name": "risk-level-overview"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Priority Action Items"
+            },
+            "name": "exec-action-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\nlet domainIssues = data\n| summarize\n    Messages = sum(MessageCount),\n    FailedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    arg_max(TimeGenerated, PolicyPublished_p)\n    by Domain\n| extend PassRate = round(100.0 * (Messages - FailedMessages) / Messages, 1)\n| extend Issue = case(\n    PolicyPublished_p == 'none' and PassRate >= 97, strcat('Domain \"', Domain, '\" is ready for p=quarantine (', PassRate, '% pass rate) - move from monitor mode'),\n    PolicyPublished_p == 'quarantine' and PassRate >= 99, strcat('Domain \"', Domain, '\" is ready for p=reject (', PassRate, '% pass rate) - strengthen enforcement'),\n    PassRate < 80, strcat('Domain \"', Domain, '\" has critical auth failures (', PassRate, '% pass rate, ', FailedMessages, ' failures) - investigate sources'),\n    PassRate < 95, strcat('Domain \"', Domain, '\" has auth issues (', PassRate, '% pass rate) - review failing senders'),\n    ''\n)\n| where isnotempty(Issue);\nlet ipIssues = data\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize FailedMessages = sum(MessageCount), Domains = make_set(Domain, 3) by SourceIP\n| where FailedMessages >= 10\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend ASN_Org = tostring(GeoInfo.asn_org)\n| extend Issue = strcat('Suspicious IP ', SourceIP, ' (', ASN_Org, ') sent ', FailedMessages, ' failed messages for ', strcat_array(Domains, ', '))\n| top 5 by FailedMessages desc;\nlet policyIssues = data\n| summarize arg_max(TimeGenerated, PolicyPublished_p) by Domain\n| where PolicyPublished_p == 'none'\n| summarize Domains = make_list(Domain)\n| where array_length(Domains) > 0\n| extend Issue = strcat(array_length(Domains), ' domain(s) still in monitor mode (p=none): ', strcat_array(Domains, ', '));\nunion\n    (domainIssues | project Priority = case(Issue has 'critical', 1, Issue has 'ready for p=reject', 2, Issue has 'ready for p=quarantine', 3, 4), Category = 'Domain Health', Issue),\n    (ipIssues | project Priority = 1, Category = 'Suspicious Activity', Issue),\n    (policyIssues | project Priority = 3, Category = 'Policy Progression', Issue)\n| sort by Priority asc\n| take 15\n| project Priority = case(Priority == 1, 'Critical', Priority == 2, 'High', Priority == 3, 'Medium', 'Low'), Category, ActionItem = Issue",
+              "size": 0,
+              "title": "What to Fix Next",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Priority",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Critical",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "High",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Medium",
+                          "representation": "yellow",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Low",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "action-items"
+          }
+        ]
       },
-      "name": "alignment-header"
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "executive"
+      },
+      "name": "executive-group"
     },
     {
-      "type": 3,
+      "type": 12,
       "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Messages = sum(MessageCount) by SpfResult\n| sort by Messages desc",
-        "size": 2,
-        "title": "SPF Results",
-        "queryType": 0,
-        "visualization": "piechart",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "### Combined Authentication View"
+            },
+            "name": "auth-combined-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\nlet total = toscalar(data | summarize sum(MessageCount));\ndata\n| extend\n    SPF_Status = iff(PolicyEvaluated_spf == 'pass', 'SPF Pass', 'SPF Fail'),\n    DKIM_Status = iff(PolicyEvaluated_dkim == 'pass', 'DKIM Pass', 'DKIM Fail')\n| summarize Messages = sum(MessageCount) by SPF_Status, DKIM_Status\n| extend\n    DMARC_Result = iff(SPF_Status == 'SPF Pass' or DKIM_Status == 'DKIM Pass', 'DMARC Pass', 'DMARC Fail'),\n    Percentage = round(100.0 * Messages / total, 1)\n| project SPF_Status, DKIM_Status, DMARC_Result, Messages, Percentage\n| sort by Messages desc",
+              "size": 0,
+              "title": "DMARC/SPF/DKIM Combined Authentication Matrix",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "auth-matrix"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize Messages = sum(MessageCount) by SpfResult\n| sort by Messages desc",
+              "size": 2,
+              "title": "SPF Results",
+              "queryType": 0,
+              "visualization": "piechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "spf-results-pie"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize Messages = sum(MessageCount) by DkimResult\n| sort by Messages desc",
+              "size": 2,
+              "title": "DKIM Results",
+              "queryType": 0,
+              "visualization": "piechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "dkim-results-pie"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    SpfPassRate = round(100.0 * sumif(MessageCount, PolicyEvaluated_spf == 'pass') / sum(MessageCount), 1),\n    DkimPassRate = round(100.0 * sumif(MessageCount, PolicyEvaluated_dkim == 'pass') / sum(MessageCount), 1)\n    by bin(TimeGenerated, 1d)\n| sort by TimeGenerated asc",
+              "size": 0,
+              "title": "SPF & DKIM Pass Rate Trend",
+              "queryType": 0,
+              "visualization": "timechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "spf-dkim-trend"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Failure & Override Analysis"
+            },
+            "name": "auth-failure-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(PolicyEvaluated_reason_type)\n| mv-expand ReasonType = split(PolicyEvaluated_reason_type, '; ')\n| extend ReasonType = tostring(ReasonType)\n| summarize Messages = sum(MessageCount) by ReasonType\n| sort by Messages desc",
+              "size": 2,
+              "title": "Failure Reason Types",
+              "queryType": 0,
+              "visualization": "piechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "failure-reason-pie"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(PolicyEvaluated_reason_type)\n| summarize\n    Messages = sum(MessageCount),\n    UniqueIPs = dcount(SourceIP),\n    Domains = make_set(Domain, 10),\n    SampleComments = make_set(PolicyEvaluated_reason_comment, 5)\n    by PolicyEvaluated_reason_type\n| sort by Messages desc\n| project ReasonType = PolicyEvaluated_reason_type, Messages, UniqueIPs, Domains, SampleComments",
+              "size": 0,
+              "title": "Failure Reason Details",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "failure-reason-table"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(PolicyEvaluated_reason_type)\n| summarize\n    OverriddenMessages = sum(MessageCount),\n    UniqueIPs = dcount(SourceIP),\n    SampleIPs = make_set(SourceIP, 5),\n    Domains = make_set(Domain, 5),\n    SampleComments = make_set(PolicyEvaluated_reason_comment, 3)\n    by PolicyEvaluated_reason_type, PublishedPolicy = PolicyPublished_p, ActualDisposition = PolicyEvaluated_disposition\n| sort by OverriddenMessages desc",
+              "size": 0,
+              "title": "Policy Override Reasons",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "policy-override-reasons"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Remediation"
+            },
+            "name": "auth-remediation-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where PolicyEvaluated_dkim == 'fail' or PolicyEvaluated_spf == 'fail'\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend ASN_Org = tostring(GeoInfo.asn_org)\n| summarize\n    FailedMessages = sum(MessageCount),\n    SpfFails = sumif(MessageCount, PolicyEvaluated_spf == 'fail'),\n    DkimFails = sumif(MessageCount, PolicyEvaluated_dkim == 'fail'),\n    SpfDomains = make_set(SpfDomain, 3),\n    DkimDomains = make_set(DkimDomain, 3),\n    DkimSelectors = make_set(DkimSelector, 3),\n    HeaderFroms = make_set(HeaderFrom, 3),\n    ReasonTypes = make_set(PolicyEvaluated_reason_type, 3)\n    by SourceIP, ASN_Org\n| extend\n    Remediation = case(\n        SpfFails > 0 and DkimFails == 0, strcat('Add ', SourceIP, ' to SPF record for ', strcat_array(SpfDomains, '/')),\n        DkimFails > 0 and SpfFails == 0, strcat('Check DKIM signing config for selector(s): ', strcat_array(DkimSelectors, ', ')),\n        SpfFails > 0 and DkimFails > 0 and tostring(ReasonTypes) has 'forwarded', 'Forwarded mail - consider ARC or trusted forwarder list',\n        SpfFails > 0 and DkimFails > 0, strcat('Fix both SPF (add IP) and DKIM (configure signing) for ', strcat_array(HeaderFroms, '/')),\n        'Investigate sender configuration'\n    )\n| top 25 by FailedMessages desc\n| project SourceIP, ASN_Org, FailedMessages, SpfFails, DkimFails, Remediation, HeaderFroms",
+              "size": 0,
+              "title": "Top Failing Senders with Fix Recommendations",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "failing-senders-remediation"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Forwarding & Alignment"
+            },
+            "name": "auth-forwarding-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where\n    (PolicyEvaluated_spf == 'fail' and PolicyEvaluated_dkim == 'pass')\n    or PolicyEvaluated_reason_type has_any ('forwarded', 'trusted_forwarder', 'mailing_list')\n    or (isnotempty(EnvelopeFrom) and HeaderFrom != EnvelopeFrom and PolicyEvaluated_dkim == 'pass')\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend ASN_Org = tostring(GeoInfo.asn_org)\n| summarize\n    ForwardedMessages = sum(MessageCount),\n    UniqueForwarderIPs = dcount(SourceIP),\n    ForwarderOrgs = make_set(ASN_Org, 10),\n    TargetDomains = make_set(Domain, 5),\n    ReasonTypes = make_set(PolicyEvaluated_reason_type, 5)\n    by HeaderFrom\n| sort by ForwardedMessages desc\n| take 50",
+              "size": 0,
+              "title": "Forwarding Detection",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "forwarding-detection"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(EnvelopeFrom) and isnotempty(HeaderFrom)\n| extend\n    Aligned = iff(tolower(HeaderFrom) == tolower(EnvelopeFrom), true, false),\n    SpfPassed = PolicyEvaluated_spf == 'pass',\n    DkimPassed = PolicyEvaluated_dkim == 'pass'\n| extend\n    Pattern = case(\n        Aligned and SpfPassed and DkimPassed, 'Aligned - Full Pass',\n        Aligned and (SpfPassed or DkimPassed), 'Aligned - Partial Pass',\n        Aligned and not(SpfPassed) and not(DkimPassed), 'Aligned - Full Fail',\n        not(Aligned) and DkimPassed and not(SpfPassed), 'Mismatched - Likely Forwarded (DKIM pass, SPF fail)',\n        not(Aligned) and not(SpfPassed) and not(DkimPassed), 'Mismatched - Likely Spoofed (Both fail)',\n        not(Aligned) and SpfPassed and DkimPassed, 'Mismatched - Both Pass (Indirect send)',\n        'Other'\n    )\n| summarize\n    Messages = sum(MessageCount),\n    UniqueIPs = dcount(SourceIP),\n    SampleHeaderFroms = make_set(HeaderFrom, 5),\n    SampleEnvelopeFroms = make_set(EnvelopeFrom, 5)\n    by Pattern\n| sort by Messages desc",
+              "size": 0,
+              "title": "Envelope vs Header From Analysis",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "envelope-header-analysis"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Detailed Authentication Data"
+            },
+            "name": "auth-detail-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Messages = sum(MessageCount),\n    SpfPassRate = round(100.0 * sumif(MessageCount, SpfResult == 'pass') / sum(MessageCount), 1),\n    DkimPassRate = round(100.0 * sumif(MessageCount, DkimResult == 'pass') / sum(MessageCount), 1)\n    by SpfDomain\n| top 25 by Messages desc\n| project SpfDomain, Messages, SpfPassRate, DkimPassRate",
+              "size": 0,
+              "title": "Authentication by SPF Domain",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "auth-by-spf-domain"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(DkimSelector)\n| summarize\n    Messages = sum(MessageCount),\n    PassCount = sumif(MessageCount, DkimResult == 'pass'),\n    FailCount = sumif(MessageCount, DkimResult != 'pass'),\n    Domains = make_set(Domain)\n    by DkimSelector, DkimDomain\n| extend PassRate = round(100.0 * PassCount / Messages, 1)\n| top 50 by Messages desc\n| project DkimSelector, DkimDomain, Messages, PassRate, PassCount, FailCount, Domains",
+              "size": 0,
+              "title": "DKIM Results by Selector",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "sortBy": [
+                  {
+                    "itemKey": "Messages",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "dkim-by-selector"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| extend\n    DKIM_Alignment = iff(isempty(PolicyPublished_adkim), 'r', PolicyPublished_adkim),\n    SPF_Alignment = iff(isempty(PolicyPublished_aspf), 'r', PolicyPublished_aspf)\n| summarize\n    Messages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass')\n    by DKIM_AlignmentMode = DKIM_Alignment, SPF_AlignmentMode = SPF_Alignment\n| extend\n    PassRate = round(100.0 * PassedMessages / Messages, 1),\n    DKIM_Mode = iff(DKIM_AlignmentMode == 's', 'Strict', 'Relaxed'),\n    SPF_Mode = iff(SPF_AlignmentMode == 's', 'Strict', 'Relaxed')\n| project DKIM_Mode, SPF_Mode, Messages, PassedMessages, PassRate\n| sort by Messages desc",
+              "size": 0,
+              "title": "Alignment Mode Breakdown",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "alignment-mode-breakdown"
+          }
+        ]
       },
-      "name": "spf-results-pie"
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "authentication"
+      },
+      "name": "authentication-group"
     },
     {
-      "type": 3,
+      "type": 12,
       "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Messages = sum(MessageCount) by DkimResult\n| sort by Messages desc",
-        "size": 2,
-        "title": "DKIM Results",
-        "queryType": 0,
-        "visualization": "piechart",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "### Sender Classification"
+            },
+            "name": "sources-classification-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet knownESPs = dynamic(['google', 'microsoft', 'amazon', 'sendgrid', 'mailchimp', 'mailgun', 'postmark', 'sparkpost', 'sendinblue', 'brevo', 'constantcontact', 'salesforce', 'hubspot', 'zendesk', 'freshdesk', 'intercom', 'mandrill', 'mimecast', 'proofpoint', 'barracuda', 'cisco', 'cloudflare', 'fastmail', 'zoho', 'rackspace', 'godaddy', 'ovh', 'hetzner', 'ionos']);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Messages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    Domains = make_set(Domain, 5),\n    HeaderFroms = make_set(HeaderFrom, 5)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    ASN_Org = tostring(GeoInfo.asn_org),\n    Country = tostring(GeoInfo.country)\n| extend\n    ASN_Org_Lower = tolower(ASN_Org),\n    PassRate = round(100.0 * Pass / Messages, 1)\n| extend\n    Classification = case(\n        PassRate >= 95 and ASN_Org_Lower has_any (knownESPs), 'Authorized (Known ESP)',\n        PassRate >= 95, 'Authorized (Passing)',\n        PassRate >= 50 and ASN_Org_Lower has_any (knownESPs), 'Needs Attention (Known ESP)',\n        PassRate < 50 and ASN_Org_Lower has_any (knownESPs), 'Misconfigured (Known ESP)',\n        PassRate < 50, 'Unknown / Suspicious',\n        'Unclassified'\n    )\n| top 100 by Messages desc\n| project SourceIP, Classification, ASN_Org, Country, Messages, PassRate, Domains, HeaderFroms\n| sort by Classification asc, Messages desc",
+              "size": 0,
+              "title": "Top Senders - Authorized vs Unknown",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Classification",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "contains",
+                          "thresholdValue": "Authorized",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "contains",
+                          "thresholdValue": "Needs Attention",
+                          "representation": "yellow",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "contains",
+                          "thresholdValue": "Misconfigured",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "contains",
+                          "thresholdValue": "Unknown",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "contains",
+                          "thresholdValue": "Suspicious",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "Classification",
+                    "sortOrder": 1
+                  }
+                ]
+              }
+            },
+            "name": "authorized-vs-unknown"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize Messages = sum(MessageCount) by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend ASN_Org = tolower(tostring(GeoInfo.asn_org))\n| extend Category = case(\n    ASN_Org has_any ('amazon', 'aws'), 'Cloud: AWS',\n    ASN_Org has_any ('microsoft', 'azure'), 'Cloud: Azure',\n    ASN_Org has_any ('google', 'gcp'), 'Cloud: Google',\n    ASN_Org has_any ('digitalocean'), 'Cloud: DigitalOcean',\n    ASN_Org has_any ('sendgrid'), 'ESP: SendGrid',\n    ASN_Org has_any ('mailchimp', 'intuit'), 'ESP: Mailchimp',\n    ASN_Org has_any ('mailgun'), 'ESP: Mailgun',\n    ASN_Org has_any ('salesforce', 'exacttarget'), 'ESP: Salesforce',\n    ASN_Org has_any ('hubspot'), 'ESP: HubSpot',\n    ASN_Org has_any ('mimecast'), 'Security: Mimecast',\n    ASN_Org has_any ('proofpoint'), 'Security: Proofpoint',\n    ASN_Org has_any ('barracuda'), 'Security: Barracuda',\n    ASN_Org has_any ('cloudflare'), 'Infra: Cloudflare',\n    ASN_Org has_any ('ovh'), 'Hosting: OVH',\n    ASN_Org has_any ('hetzner'), 'Hosting: Hetzner',\n    ASN_Org has_any ('godaddy'), 'Hosting: GoDaddy',\n    'Other'\n)\n| summarize Messages = sum(Messages), UniqueIPs = dcount(SourceIP) by Category\n| sort by Messages desc",
+              "size": 2,
+              "title": "Source IP Classification by Provider",
+              "queryType": 0,
+              "visualization": "piechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "source-ip-classification"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Volume by Sending Identity"
+            },
+            "name": "sources-identity-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Messages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP),\n    Reporters = dcount(ReportOrgName)\n    by HeaderFrom\n| extend PassRate = round(100.0 * Pass / Messages, 1)\n| top 50 by Messages desc\n| project HeaderFrom, Messages, PassRate, Fail, UniqueIPs, Reporters",
+              "size": 0,
+              "title": "Top 50 Sending Identities (HeaderFrom)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "PassRate",
+                    "formatter": 8,
+                    "formatOptions": {
+                      "palette": "redGreen"
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "Messages",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "volume-by-identity"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Anomaly Detection"
+            },
+            "name": "sources-anomaly-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet lookback = 30d;\nlet recentWindow = 1d;\nlet baseline = DMARCReports_CL\n| where TimeGenerated between (ago(lookback) .. ago(recentWindow))\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize DailyMessages = sum(MessageCount) by SourceIP, bin(TimeGenerated, 1d)\n| summarize\n    AvgDailyVolume = avg(DailyMessages),\n    StdDevVolume = stdev(DailyMessages),\n    DaysActive = dcount(TimeGenerated)\n    by SourceIP\n| where DaysActive >= 3;\nlet recent = DMARCReports_CL\n| where TimeGenerated > ago(recentWindow)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize RecentMessages = sum(MessageCount) by SourceIP;\nbaseline\n| join kind=inner recent on SourceIP\n| extend\n    ZScore = iff(StdDevVolume > 0, round((RecentMessages - AvgDailyVolume) / StdDevVolume, 2), 0.0),\n    VolumeMultiple = round(RecentMessages / AvgDailyVolume, 1)\n| where ZScore > 2.0 or VolumeMultiple > 3.0\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend ASN_Org = tostring(GeoInfo.asn_org), Country = tostring(GeoInfo.country)\n| project SourceIP, ASN_Org, Country, RecentMessages, AvgDailyVolume = round(AvgDailyVolume, 0), VolumeMultiple, ZScore, DaysActive\n| sort by ZScore desc\n| take 25",
+              "size": 0,
+              "title": "Volume Anomaly Detection (Last 24h vs 30d Baseline)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "sortBy": [
+                  {
+                    "itemKey": "ZScore",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "volume-anomaly"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Source IP Details"
+            },
+            "name": "sources-detail-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Messages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    Domains = make_set(Domain, 5)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    PassRate = round(100.0 * Pass / Messages, 1),\n    ASN_Org = tostring(GeoInfo.asn_org),\n    Country = tostring(GeoInfo.country)\n| top 50 by Messages desc\n| project SourceIP, Messages, PassRate, ASN_Org, Country,\n    ReputationLookup = strcat('https://talosintelligence.com/reputation_center/lookup?search=', SourceIP),\n    Domains",
+              "size": 0,
+              "title": "Top 50 Source IPs (with Reputation Lookup)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "PassRate",
+                    "formatter": 8,
+                    "formatOptions": {
+                      "palette": "redGreen"
+                    }
+                  },
+                  {
+                    "columnMatch": "ReputationLookup",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url"
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "Messages",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "top-ips-reputation"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    FailedMessages = sum(MessageCount),\n    Domains = make_set(Domain),\n    HeaderFroms = make_set(HeaderFrom)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    ASN = tostring(GeoInfo.asn),\n    ASN_Org = tostring(GeoInfo.asn_org),\n    Country = tostring(GeoInfo.country)\n| top 25 by FailedMessages desc\n| project SourceIP, FailedMessages, ASN, ASN_Org, Country, HeaderFroms, Domains",
+              "size": 0,
+              "title": "Suspicious IPs (Both SPF & DKIM Failing)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "sortBy": [
+                  {
+                    "itemKey": "FailedMessages",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "suspicious-ips"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    TotalMessages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    FailedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP)\n    by SourceIP\n| extend GeoInfo = geo_info_from_ip_address(SourceIP)\n| extend\n    Latitude = toreal(GeoInfo.latitude),\n    Longitude = toreal(GeoInfo.longitude),\n    Country = tostring(GeoInfo.country),\n    City = tostring(GeoInfo.city),\n    PassRate = round(100.0 * PassedMessages / TotalMessages, 1)\n| where isnotnull(Latitude) and isnotnull(Longitude)\n| summarize\n    Messages = sum(TotalMessages),\n    PassRate = round(avg(PassRate), 1),\n    IPs = sum(UniqueIPs)\n    by Country, City, Latitude, Longitude\n| project Country, City, Latitude, Longitude, Messages, PassRate, IPs",
+              "size": 0,
+              "title": "Geographic Distribution of Email Sources",
+              "queryType": 0,
+              "visualization": "map",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "mapSettings": {
+                "locInfo": "LatLong",
+                "latitude": "Latitude",
+                "longitude": "Longitude",
+                "sizeSettings": "Messages",
+                "sizeAggregation": "Sum",
+                "labelSettings": "Country",
+                "legendMetric": "PassRate",
+                "legendAggregation": "Sum",
+                "itemColorSettings": {
+                  "nodeColorField": "PassRate",
+                  "colorAggregation": "Sum",
+                  "type": "heatmap",
+                  "heatmapPalette": "greenRed",
+                  "heatmapMin": 0,
+                  "heatmapMax": 100
+                }
+              }
+            },
+            "name": "geoip-map"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet known = DMARCReports_CL\n| where TimeGenerated between (ago(30d) .. ago(1d))\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| distinct SourceIP;\nDMARCReports_CL\n| where TimeGenerated > ago(1d)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where SourceIP !in (known)\n| summarize\n    Messages = sum(MessageCount),\n    Domains = make_set(Domain),\n    DkimResult = make_set(PolicyEvaluated_dkim),\n    SpfResult = make_set(PolicyEvaluated_spf)\n    by SourceIP\n| sort by Messages desc\n| take 50",
+              "size": 0,
+              "title": "New Source IPs (Last 24h vs Previous 30 Days)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "new-source-ips"
+          }
+        ]
       },
-      "name": "dkim-results-pie"
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "sources"
+      },
+      "name": "sources-group"
     },
     {
-      "type": 3,
+      "type": 12,
       "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    SpfPassRate = round(100.0 * sumif(MessageCount, SpfResult == 'pass') / sum(MessageCount), 1),\n    DkimPassRate = round(100.0 * sumif(MessageCount, DkimResult == 'pass') / sum(MessageCount), 1)\n    by SpfDomain\n| top 25 by Messages desc\n| project SpfDomain, Messages, SpfPassRate, DkimPassRate",
-        "size": 0,
-        "title": "Authentication by SPF Domain",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "### Compliance Scoring"
+            },
+            "name": "domain-scoring-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\nlet policies = data\n| summarize arg_max(TimeGenerated, PolicyPublished_p, PolicyPublished_sp) by Domain\n| project Domain, PolicyPublished_p, PolicyPublished_sp;\ndata\n| summarize\n    Messages = sum(MessageCount),\n    DmarcPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    DmarcFail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    SpfPassCount = sumif(MessageCount, PolicyEvaluated_spf == 'pass'),\n    DkimPassCount = sumif(MessageCount, PolicyEvaluated_dkim == 'pass'),\n    UniqueIPs = dcount(SourceIP),\n    SuspiciousIPs = dcountif(SourceIP, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')\n    by Domain\n| join kind=leftouter policies on Domain\n| extend\n    PassRate = round(100.0 * DmarcPass / Messages, 1),\n    SpfPassRate = round(100.0 * SpfPassCount / Messages, 1),\n    DkimPassRate = round(100.0 * DkimPassCount / Messages, 1),\n    ComplianceScore = round(\n        0.40 * (100.0 * DmarcPass / Messages)\n        + 0.25 * (100.0 * SpfPassCount / Messages)\n        + 0.25 * (100.0 * DkimPassCount / Messages)\n        + 0.10 * case(PolicyPublished_p == 'reject', 100.0, PolicyPublished_p == 'quarantine', 60.0, PolicyPublished_p == 'none', 20.0, 0.0)\n    , 0)\n| extend\n    RiskLevel = case(\n        ComplianceScore >= 90, 'Low',\n        ComplianceScore >= 70, 'Moderate',\n        ComplianceScore >= 50, 'High',\n        'Critical'\n    )\n| project Domain, ComplianceScore, RiskLevel, PassRate, SpfPassRate, DkimPassRate,\n    Policy=PolicyPublished_p, SubdomainPolicy=PolicyPublished_sp,\n    Messages, UniqueIPs, SuspiciousIPs\n| sort by ComplianceScore asc",
+              "size": 0,
+              "title": "Per-Domain Compliance Score & Risk Level",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "ComplianceScore",
+                    "formatter": 8,
+                    "formatOptions": {
+                      "palette": "redGreen"
+                    }
+                  },
+                  {
+                    "columnMatch": "RiskLevel",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Low",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Moderate",
+                          "representation": "yellow",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "High",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Critical",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "ComplianceScore",
+                    "sortOrder": 1
+                  }
+                ]
+              }
+            },
+            "name": "domain-compliance-score"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Policy Progression"
+            },
+            "name": "domain-policy-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated > ago(30d)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Messages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP),\n    SuspiciousIPs = dcountif(SourceIP, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    ForwardingOverrides = sumif(MessageCount, PolicyEvaluated_reason_type has_any ('forwarded', 'mailing_list', 'trusted_forwarder')),\n    DaysWithData = dcount(bin(TimeGenerated, 1d)),\n    arg_max(TimeGenerated, PolicyPublished_p, PolicyPublished_sp)\n    by Domain\n| extend\n    PassRate = round(100.0 * Pass / Messages, 1),\n    AdjustedPassRate = round(100.0 * (Pass + ForwardingOverrides) / Messages, 1)\n| extend\n    CurrentPolicy = PolicyPublished_p,\n    RecommendedAction = case(\n        PolicyPublished_p == 'reject' and PassRate >= 99, 'Maintain - Fully Enforced',\n        PolicyPublished_p == 'reject' and PassRate < 99, 'Review - Reject active but pass rate below 99%',\n        PolicyPublished_p == 'quarantine' and AdjustedPassRate >= 99 and DaysWithData >= 30, 'Ready for p=reject',\n        PolicyPublished_p == 'quarantine' and AdjustedPassRate >= 95, 'Almost Ready - Improve to 99%+ before reject',\n        PolicyPublished_p == 'quarantine', 'Not Ready - Fix auth failures first',\n        PolicyPublished_p == 'none' and AdjustedPassRate >= 97 and DaysWithData >= 14, 'Ready for p=quarantine',\n        PolicyPublished_p == 'none' and AdjustedPassRate >= 90, 'Almost Ready - Improve to 97%+ before quarantine',\n        PolicyPublished_p == 'none', 'Not Ready - Fix auth failures first',\n        'Check configuration'\n    )\n| project Domain, CurrentPolicy, PassRate, AdjustedPassRate, RecommendedAction,\n    Messages, Fail, ForwardingOverrides, DaysWithData, SuspiciousIPs\n| sort by Domain asc",
+              "size": 0,
+              "title": "Domain Readiness for Policy Enforcement (Last 30 Days)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "RecommendedAction",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Maintain",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Ready",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Almost",
+                          "representation": "yellow",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Review",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Not Ready",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "domain-readiness"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize Messages = sum(MessageCount) by bin(TimeGenerated, 1d), PolicyEvaluated_disposition\n| sort by TimeGenerated asc",
+              "size": 0,
+              "title": "Disposition Over Time",
+              "queryType": 0,
+              "visualization": "timechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "disposition-over-time"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize Messages = sum(MessageCount) by PolicyEvaluated_disposition\n| sort by Messages desc",
+              "size": 2,
+              "title": "Policy Disposition",
+              "queryType": 0,
+              "visualization": "piechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "disposition-pie"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize arg_max(TimeGenerated, PolicyPublished_p, PolicyPublished_sp, PolicyPublished_pct, PolicyPublished_adkim, PolicyPublished_aspf) by Domain\n| project Domain, Policy=PolicyPublished_p, SubdomainPolicy=PolicyPublished_sp, Pct=PolicyPublished_pct, DKIM_Alignment=PolicyPublished_adkim, SPF_Alignment=PolicyPublished_aspf",
+              "size": 0,
+              "title": "Published DMARC Policies",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "published-policies"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### BIMI Readiness"
+            },
+            "name": "domain-bimi-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet data = DMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n;\ndata\n| summarize\n    Messages = sum(MessageCount),\n    DmarcPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    DkimPass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass'),\n    arg_max(TimeGenerated, PolicyPublished_p, PolicyPublished_adkim)\n    by Domain\n| extend\n    PassRate = round(100.0 * DmarcPass / Messages, 1),\n    DkimPassRate = round(100.0 * DkimPass / Messages, 1)\n| extend\n    BIMIReadiness = case(\n        PolicyPublished_p == 'reject' and DkimPassRate >= 99 and PassRate >= 99, 'Ready',\n        PolicyPublished_p == 'reject' and DkimPassRate >= 95, 'Almost Ready - Improve DKIM to 99%+',\n        PolicyPublished_p == 'quarantine', 'Not Ready - Need p=reject policy first',\n        PolicyPublished_p == 'none', 'Blocked - Need enforcement (p=quarantine or p=reject)',\n        'Not Ready - Check DMARC configuration'\n    ),\n    Requirements = case(\n        PolicyPublished_p == 'reject' and DkimPassRate >= 99, 'Publish BIMI DNS record + obtain VMC certificate',\n        PolicyPublished_p == 'reject', 'Fix DKIM failures before implementing BIMI',\n        'Progress DMARC policy to p=reject first'\n    )\n| project Domain, BIMIReadiness, Policy=PolicyPublished_p, PassRate, DkimPassRate, Requirements\n| sort by BIMIReadiness asc",
+              "size": 0,
+              "title": "BIMI Readiness Assessment",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "BIMIReadiness",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Ready",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Almost",
+                          "representation": "yellow",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Not Ready",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "startsWith",
+                          "thresholdValue": "Blocked",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "BIMIReadiness",
+                    "sortOrder": 1
+                  }
+                ]
+              }
+            },
+            "name": "bimi-readiness"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Detailed Analysis"
+            },
+            "name": "domain-detail-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(DkimSelector)\n| summarize\n    Messages = sum(MessageCount),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    PassRate = round(100.0 * sumif(MessageCount, DkimResult == 'pass') / sum(MessageCount), 1)\n    by DkimDomain, DkimSelector\n| extend\n    DaysSinceLastSeen = datetime_diff('day', now(), LastSeen),\n    ActiveDuration = datetime_diff('day', LastSeen, FirstSeen),\n    Status = case(\n        datetime_diff('day', now(), LastSeen) <= 2, 'Active',\n        datetime_diff('day', now(), LastSeen) <= 7, 'Recently Inactive',\n        'Retired'\n    )\n| project DkimDomain, DkimSelector, Status, Messages, PassRate, FirstSeen, LastSeen, ActiveDuration, DaysSinceLastSeen\n| sort by DkimDomain asc, LastSeen desc",
+              "size": 0,
+              "title": "DKIM Selector Rotation Tracking",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Status",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Active",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Recently Inactive",
+                          "representation": "yellow",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Retired",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "dkim-selector-rotation"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(HeaderFrom)\n| extend Subdomain = tolower(HeaderFrom)\n| summarize\n    Messages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    FailedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    UniqueIPs = dcount(SourceIP),\n    BaseDomains = make_set(Domain)\n    by Subdomain\n| extend PassRate = round(100.0 * PassedMessages / Messages, 1)\n| project Subdomain, Messages, PassRate, FailedMessages, UniqueIPs, FirstSeen, LastSeen, BaseDomains\n| sort by Messages desc\n| take 100",
+              "size": 0,
+              "title": "Observed Subdomains (Top 100)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "sortBy": [
+                  {
+                    "itemKey": "Messages",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "subdomain-discovery"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| where isnotempty(EnvelopeFrom) and HeaderFrom != EnvelopeFrom\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    SpoofedMessages = sum(MessageCount),\n    SourceIPs = make_set(SourceIP, 10)\n    by HeaderFrom, EnvelopeFrom\n| sort by SpoofedMessages desc\n| take 50",
+              "size": 0,
+              "title": "Potential Spoofing (Header/Envelope Mismatch + Auth Fail)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "spoofing-detection"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### DMARC Policy Progression Guidance\n\n**Moving from Monitor to Enforcement:**\n\n- **Current Policy: `p=none` (Monitor Mode)**\n  - Safe to move to `p=quarantine` if:\n    - Pass rate is consistently >=95-99% for at least 30 days\n    - All legitimate mail sources are authenticated (review Top Source IPs)\n    - No business-critical senders are failing authentication\n  - Action: Review suspicious IPs and subdomain discovery before progressing\n\n- **Current Policy: `p=quarantine` (Quarantine Mode)**\n  - Safe to move to `p=reject` if:\n    - Pass rate is consistently >=99% for at least 30-60 days\n    - Zero complaints from users about legitimate mail in spam/quarantine\n    - All critical business workflows tested and verified\n  - Action: Consider starting with `pct=10` then gradually increase\n\n- **Current Policy: `p=reject` (Reject Mode)**\n  - You've achieved full DMARC enforcement!\n  - Continue monitoring for new legitimate sources and authentication failures\n  - Ensure subdomain policy (`sp=`) is also set appropriately\n\n**Best Practices:**\n- Use `pct=` to apply policy to a percentage of messages during transition\n- Monitor for at least 7-14 days after any policy change\n- Always verify legitimate mail providers are authenticated before enforcing\n- Set up Azure Monitor alerts for authentication failure spikes"
+            },
+            "name": "policy-guidance-text"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Messages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP)\n    by Domain\n| extend PassRate = round(100.0 * Pass / Messages, 1)\n| project Domain, Messages, PassRate, Fail, UniqueIPs\n| sort by Messages desc",
+              "size": 0,
+              "title": "Per-Domain Compliance Summary",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "domain-compliance"
+          }
+        ]
       },
-      "name": "auth-by-spf-domain"
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "domain"
+      },
+      "name": "domain-group"
     },
     {
-      "type": 3,
+      "type": 12,
       "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where isnotempty(DkimSelector)\n| summarize\n    Messages = sum(MessageCount),\n    PassCount = sumif(MessageCount, DkimResult == 'pass'),\n    FailCount = sumif(MessageCount, DkimResult != 'pass'),\n    Domains = make_set(Domain)\n    by DkimSelector, DkimDomain\n| extend PassRate = round(100.0 * PassCount / Messages, 1)\n| top 50 by Messages desc\n| project DkimSelector, DkimDomain, Messages, PassRate, PassCount, FailCount, Domains",
-        "size": 0,
-        "title": "DKIM Results by Selector",
-        "queryType": 0,
-        "visualization": "table",
-        "gridSettings": {
-          "sortBy": [
-            {
-              "itemKey": "Messages",
-              "sortOrder": 2
-            }
-          ]
-        },
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    TotalMessages = sum(MessageCount),\n    TotalRecords = count(),\n    UniqueSourceIPs = dcount(SourceIP),\n    UniqueReporters = dcount(ReportOrgName),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail')\n| extend PassRate = iff(TotalMessages > 0, round(100.0 * Pass / TotalMessages, 1), 0.0)\n| project TotalMessages, TotalRecords, UniqueSourceIPs, UniqueReporters, PassRate",
+              "size": 4,
+              "title": "Summary",
+              "queryType": 0,
+              "visualization": "tiles",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Column1",
+                  "formatter": 1
+                },
+                "leftContent": {
+                  "columnMatch": "TotalMessages",
+                  "formatter": 12
+                },
+                "showBorder": true
+              }
+            },
+            "name": "summary-tiles"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Report Health"
+            },
+            "name": "reporting-health-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated > ago(90d)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    LastReportTime = max(TimeGenerated),\n    TotalReports = dcount(ReportId),\n    TotalMessages = sum(MessageCount),\n    AvgDailyReports = round(1.0 * dcount(ReportId) / max_of(datetime_diff('day', max(TimeGenerated), min(TimeGenerated)), 1), 1)\n    by ReportOrgName\n| extend\n    HoursSinceLastReport = datetime_diff('hour', now(), LastReportTime),\n    Freshness = case(\n        datetime_diff('hour', now(), LastReportTime) <= 28, 'Fresh',\n        datetime_diff('hour', now(), LastReportTime) <= 72, 'Normal',\n        datetime_diff('day', now(), LastReportTime) <= 7, 'Delayed',\n        'Stale'\n    )\n| project ReportOrgName, Freshness, LastReportTime, HoursSinceLastReport, TotalReports, TotalMessages, AvgDailyReports\n| sort by HoursSinceLastReport desc",
+              "size": 0,
+              "title": "Report Freshness Monitor",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Freshness",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Fresh",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Normal",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Delayed",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Stale",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "HoursSinceLastReport",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "report-freshness"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Coverage Analysis"
+            },
+            "name": "reporting-coverage-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Reports = dcount(ReportId),\n    Messages = sum(MessageCount),\n    LastReport = max(TimeGenerated),\n    FirstReport = min(TimeGenerated),\n    DomainsReported = make_set(Domain, 10)\n    by ReportOrgName\n| extend\n    DaysSinceLastReport = datetime_diff('day', now(), LastReport),\n    Status = case(\n        datetime_diff('hour', now(), LastReport) <= 48, 'Active',\n        datetime_diff('day', now(), LastReport) <= 7, 'Delayed',\n        'Stale'\n    )\n| project ReportOrgName, Status, Reports, Messages, LastReport, FirstReport, DaysSinceLastReport, DomainsReported\n| sort by Messages desc",
+              "size": 0,
+              "title": "Reporter Coverage Analysis",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Status",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Active",
+                          "representation": "green",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Delayed",
+                          "representation": "orange",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Stale",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "blue",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "sortBy": [
+                  {
+                    "itemKey": "Messages",
+                    "sortOrder": 2
+                  }
+                ]
+              }
+            },
+            "name": "reporter-coverage"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nlet expectedReporters = dynamic(['google.com', 'microsoft.com', 'yahoo.com', 'comcast.net', 'apple.com', 'fastmail.com', 'zoho.com']);\nlet activeReporters = DMARCReports_CL\n| where TimeGenerated > ago(30d)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| distinct tolower(ReportOrgName);\nprint ExpectedReporters = expectedReporters\n| mv-expand Reporter = ExpectedReporters\n| extend Reporter = tostring(Reporter)\n| where Reporter !in (activeReporters)\n| project MissingReporter = Reporter, Note = 'No reports received in the last 30 days. Check DMARC DNS record rua tag.'",
+              "size": 0,
+              "title": "Missing Expected Reporters (Last 30 Days)",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "missing-reporters"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Report Data"
+            },
+            "name": "reporting-data-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize\n    Reports = dcount(ReportId),\n    Records = count(),\n    Messages = sum(MessageCount)\n    by ReportOrgName\n| sort by Messages desc",
+              "size": 0,
+              "title": "Reports by Provider",
+              "queryType": 0,
+              "visualization": "table",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "reports-by-provider"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let domainFilter = dynamic([{Domain}]);\nlet reporterFilter = dynamic([{Reporter}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where '*' in (reporterFilter) or ReportOrgName in (reporterFilter)\n| summarize Reports = dcount(ReportId) by bin(TimeGenerated, 1d), ReportOrgName\n| sort by TimeGenerated asc",
+              "size": 0,
+              "title": "Report Volume Over Time by Provider",
+              "queryType": 0,
+              "visualization": "timechart",
+              "crossComponentResources": [
+                "{Workspace}"
+              ],
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "report-volume-timechart"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "### Azure Monitor Alert Rule Templates\n\nCreate alert rules in Azure Monitor using these KQL queries to get notified about DMARC issues. Navigate to **Azure Monitor > Alerts > Create alert rule** and select your Log Analytics workspace.\n\n**1. DMARC Pass Rate Drop Alert** (run every 1 hour, look back 24 hours):\n```kql\nDMARCReports_CL\n| where TimeGenerated > ago(24h)\n| summarize Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'), Total = sum(MessageCount)\n| extend PassRate = 100.0 * Pass / Total\n| where PassRate < 90\n```\n\n**2. New Suspicious Source IP Alert** (run every 6 hours):\n```kql\nlet known = DMARCReports_CL | where TimeGenerated between (ago(30d) .. ago(1d)) | distinct SourceIP;\nDMARCReports_CL\n| where TimeGenerated > ago(1d)\n| where SourceIP !in (known)\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize FailedMessages = sum(MessageCount), Domains = make_set(Domain) by SourceIP\n| where FailedMessages >= 10\n```\n\n**3. Volume Spike Alert** (run every 1 hour):\n```kql\nlet baseline = DMARCReports_CL | where TimeGenerated between (ago(30d) .. ago(1d)) | summarize AvgDaily = sum(MessageCount) / 29.0;\nlet recent = DMARCReports_CL | where TimeGenerated > ago(1d) | summarize RecentTotal = sum(MessageCount);\nbaseline | extend x = 1 | join kind=inner (recent | extend x = 1) on x\n| where RecentTotal > AvgDaily * 3\n```\n\n**4. Report Freshness Alert** (run every 24 hours):\n```kql\nDMARCReports_CL\n| summarize LastReport = max(TimeGenerated)\n| where LastReport < ago(72h)\n```\n\n**Tip:** Set up Action Groups to notify via Email, Teams, Slack (webhook), or trigger a Logic App for automated responses."
+            },
+            "name": "alert-rules-template"
+          }
+        ]
       },
-      "name": "dkim-by-selector"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| extend\n    DKIM_Alignment = iff(isempty(PolicyPublished_adkim), 'r', PolicyPublished_adkim),\n    SPF_Alignment = iff(isempty(PolicyPublished_aspf), 'r', PolicyPublished_aspf)\n| summarize\n    Messages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass')\n    by DKIM_AlignmentMode = DKIM_Alignment, SPF_AlignmentMode = SPF_Alignment\n| extend\n    PassRate = round(100.0 * PassedMessages / Messages, 1),\n    DKIM_Mode = iff(DKIM_AlignmentMode == 's', 'Strict', 'Relaxed'),\n    SPF_Mode = iff(SPF_AlignmentMode == 's', 'Strict', 'Relaxed')\n| project DKIM_Mode, SPF_Mode, Messages, PassedMessages, PassRate\n| sort by Messages desc",
-        "size": 0,
-        "title": "Alignment Mode Breakdown",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
+      "conditionalVisibility": {
+        "parameterName": "selectedTab",
+        "comparison": "isEqualTo",
+        "value": "reporting"
       },
-      "name": "alignment-mode-breakdown"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Reporter Analysis"
-      },
-      "name": "reporter-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Reports = dcount(ReportId),\n    Records = count(),\n    Messages = sum(MessageCount)\n    by ReportOrgName\n| sort by Messages desc",
-        "size": 0,
-        "title": "Reports by Provider",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "reports-by-provider"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize Reports = dcount(ReportId) by bin(TimeGenerated, 1d), ReportOrgName\n| sort by TimeGenerated asc",
-        "size": 0,
-        "title": "Report Volume Over Time by Provider",
-        "queryType": 0,
-        "visualization": "timechart",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "report-volume-timechart"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Domain Compliance"
-      },
-      "name": "domain-compliance-header"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "### DMARC Policy Progression Guidance\n\n**Moving from Monitor to Enforcement:**\n\n- **Current Policy: `p=none` (Monitor Mode)**\n  - \u2705 **Safe to move to `p=quarantine`** if:\n    - Pass rate is consistently \u226595-99% for at least 30 days\n    - All legitimate mail sources are authenticated (review Top Source IPs)\n    - No business-critical senders are failing authentication\n  - \u26a0\ufe0f **Action**: Review suspicious IPs and subdomain discovery before progressing\n\n- **Current Policy: `p=quarantine` (Quarantine Mode)**\n  - \u2705 **Safe to move to `p=reject`** if:\n    - Pass rate is consistently \u226599% for at least 30-60 days\n    - Zero complaints from users about legitimate mail in spam/quarantine\n    - All critical business workflows tested and verified\n  - \u26a0\ufe0f **Action**: Consider starting with `pct=10` then gradually increase\n\n- **Current Policy: `p=reject` (Reject Mode)**\n  - \u2705 You've achieved full DMARC enforcement!\n  - \ud83d\udcca Continue monitoring for new legitimate sources and authentication failures\n  - \ud83d\udd04 Ensure subdomain policy (`sp=`) is also set appropriately\n\n**Best Practices:**\n- Use `pct=` to apply policy to a percentage of messages during transition\n- Monitor for at least 7-14 days after any policy change\n- Always verify legitimate mail providers (e.g., marketing platforms, CRM systems) are authenticated before enforcing\n- Set up Azure Monitor alerts for authentication failure spikes"
-      },
-      "name": "policy-guidance-text"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize\n    Messages = sum(MessageCount),\n    Pass = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    Fail = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    UniqueIPs = dcount(SourceIP)\n    by Domain\n| extend PassRate = round(100.0 * Pass / Messages, 1)\n| project Domain, Messages, PassRate, Fail, UniqueIPs\n| sort by Messages desc",
-        "size": 0,
-        "title": "Per-Domain Compliance",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "domain-compliance"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| summarize arg_max(TimeGenerated, PolicyPublished_p, PolicyPublished_sp, PolicyPublished_pct, PolicyPublished_adkim, PolicyPublished_aspf) by Domain\n| project Domain, Policy=PolicyPublished_p, SubdomainPolicy=PolicyPublished_sp, Pct=PolicyPublished_pct, DKIM_Alignment=PolicyPublished_adkim, SPF_Alignment=PolicyPublished_aspf",
-        "size": 0,
-        "title": "Published DMARC Policies",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "published-policies"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Subdomain Discovery"
-      },
-      "name": "subdomain-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where isnotempty(HeaderFrom)\n| extend Subdomain = tolower(HeaderFrom)\n| summarize\n    Messages = sum(MessageCount),\n    PassedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'pass' or PolicyEvaluated_spf == 'pass'),\n    FailedMessages = sumif(MessageCount, PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'),\n    FirstSeen = min(TimeGenerated),\n    LastSeen = max(TimeGenerated),\n    UniqueIPs = dcount(SourceIP),\n    BaseDomains = make_set(Domain)\n    by Subdomain\n| extend PassRate = round(100.0 * PassedMessages / Messages, 1)\n| project Subdomain, Messages, PassRate, FailedMessages, UniqueIPs, FirstSeen, LastSeen, BaseDomains\n| sort by Messages desc\n| take 100",
-        "size": 0,
-        "title": "Observed Subdomains (Top 100)",
-        "queryType": 0,
-        "visualization": "table",
-        "gridSettings": {
-          "sortBy": [
-            {
-              "itemKey": "Messages",
-              "sortOrder": 2
-            }
-          ]
-        },
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "subdomain-discovery"
-    },
-    {
-      "type": 1,
-      "content": {
-        "json": "## Threat Hunting"
-      },
-      "name": "threat-hunting-header"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nDMARCReports_CL\n| where TimeGenerated {TimeRange}\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where isnotempty(EnvelopeFrom) and HeaderFrom != EnvelopeFrom\n| where PolicyEvaluated_dkim == 'fail' and PolicyEvaluated_spf == 'fail'\n| summarize\n    SpoofedMessages = sum(MessageCount),\n    SourceIPs = make_set(SourceIP, 10)\n    by HeaderFrom, EnvelopeFrom\n| sort by SpoofedMessages desc\n| take 50",
-        "size": 0,
-        "title": "Potential Spoofing (Header/Envelope Mismatch + Auth Fail)",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "spoofing-detection"
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "let domainFilter = dynamic([{Domain}]);\nlet known = DMARCReports_CL\n| where TimeGenerated between (ago(30d) .. ago(1d))\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| distinct SourceIP;\nDMARCReports_CL\n| where TimeGenerated > ago(1d)\n| where '*' in (domainFilter) or Domain in (domainFilter)\n| where SourceIP !in (known)\n| summarize\n    Messages = sum(MessageCount),\n    Domains = make_set(Domain),\n    DkimResult = make_set(PolicyEvaluated_dkim),\n    SpfResult = make_set(PolicyEvaluated_spf)\n    by SourceIP\n| sort by Messages desc\n| take 50",
-        "size": 0,
-        "title": "New Source IPs (Last 24h vs Previous 30 Days)",
-        "queryType": 0,
-        "visualization": "table",
-        "crossComponentResources": [
-          "{Workspace}"
-        ],
-        "resourceType": "microsoft.operationalinsights/workspaces"
-      },
-      "name": "new-source-ips"
+      "name": "reporting-group"
     }
   ],
   "fallbackResourceIds": [],

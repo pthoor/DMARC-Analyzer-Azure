@@ -8,8 +8,8 @@
     Tests all functions in the DmarcHelpers.psm1 module including:
     - Token acquisition
     - Graph API helpers
-    - Attachment extraction
-    - XML parsing
+    - DMARC attachment extraction
+    - DMARC XML parsing
     - Log Analytics ingestion
 #>
 
@@ -231,7 +231,7 @@ Describe 'DmarcHelpers Module' {
     }
 
     Context 'Expand-DmarcAttachments' {
-        It 'Should handle XML attachments' {
+        It 'Should handle XML attachments and return Xml key' {
             $xmlContent = @'
 <?xml version="1.0" encoding="UTF-8"?>
 <feedback>
@@ -256,13 +256,9 @@ Describe 'DmarcHelpers Module' {
 
             $result = Expand-DmarcAttachments -Attachments @($attachment)
             $result | Should -Not -BeNullOrEmpty
-            # When there's one attachment, it returns a string, not an array
-            if ($result -is [array]) {
-                $result.Length | Should -Be 1
-                $result[0] | Should -BeLike '*<feedback>*'
-            } else {
-                $result | Should -BeLike '*<feedback>*'
-            }
+            $result.Xml | Should -Not -BeNullOrEmpty
+            $result.Xml.Count | Should -Be 1
+            $result.Xml[0] | Should -BeLike '*<feedback>*'
         }
 
         It 'Should handle GZIP attachments' {
@@ -286,13 +282,9 @@ Describe 'DmarcHelpers Module' {
 
             $result = Expand-DmarcAttachments -Attachments @($attachment)
             $result | Should -Not -BeNullOrEmpty
-            # When there's one attachment, it returns a string, not an array
-            if ($result -is [array]) {
-                $result.Length | Should -Be 1
-                $result[0] | Should -BeLike '*<feedback>*'
-            } else {
-                $result | Should -BeLike '*<feedback>*'
-            }
+            $result.Xml | Should -Not -BeNullOrEmpty
+            $result.Xml.Count | Should -Be 1
+            $result.Xml[0] | Should -BeLike '*<feedback>*'
         }
 
         It 'Should skip oversized attachments' {
@@ -307,8 +299,7 @@ Describe 'DmarcHelpers Module' {
             }
 
             $result = Expand-DmarcAttachments -Attachments @($attachment)
-            # Should skip and return empty
-            $result | Should -BeNullOrEmpty
+            $result.Xml.Count | Should -Be 0
         }
 
         It 'Should skip non-file attachments' {
@@ -318,7 +309,7 @@ Describe 'DmarcHelpers Module' {
             }
 
             $result = Expand-DmarcAttachments -Attachments @($attachment)
-            $result | Should -BeNullOrEmpty
+            $result.Xml.Count | Should -Be 0
         }
 
         It 'Should skip unrecognized file extensions' {
@@ -333,7 +324,7 @@ Describe 'DmarcHelpers Module' {
             }
 
             $result = Expand-DmarcAttachments -Attachments @($attachment)
-            $result | Should -BeNullOrEmpty
+            $result.Xml.Count | Should -Be 0
         }
     }
 
@@ -365,4 +356,5 @@ Describe 'DmarcHelpers Module' {
             { Send-DmarcRecordsToLogAnalytics -Records $records } | Should -Throw '*DCR*'
         }
     }
+
 }
