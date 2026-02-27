@@ -348,7 +348,7 @@ function Expand-ZipAttachment {
 
             $entryName = $entry.Name.ToLower()
 
-            if ($entryName.EndsWith('.xml') -or $entryName.EndsWith('.json')) {
+            if ($entryName.EndsWith('.xml')) {
                 $xmlContents.Add((Read-StreamWithLimit -Stream $entry.Open() -Limit $script:MaxDecompressedBytes -EntryName $entry.Name))
                 $entriesProcessed++
             }
