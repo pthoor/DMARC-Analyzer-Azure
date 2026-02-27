@@ -5,7 +5,7 @@
     Shared helper functions for the DMARC-to-Sentinel pipeline.
 .DESCRIPTION
     Provides token acquisition (Managed Identity), Microsoft Graph API calls,
-    DMARC XML parsing, and Log Analytics ingestion via the Logs Ingestion API.
+    DMARC XML parsing, and Log Analytics ingestion via the Logs Ingestion API (DCR).
     All operations use raw REST API calls — no external PowerShell modules.
 #>
 
@@ -272,7 +272,7 @@ function Expand-DmarcAttachments {
         Extracts DMARC XML content from mail attachments.
     .DESCRIPTION
         Handles .xml, .xml.gz, .gz, and .zip file attachments.
-        Returns an array of XML content strings.
+        Returns a hashtable with 'Xml' (array of XML strings).
         Enforces size limits to guard against oversized or decompression-bomb attachments.
     #>
     [CmdletBinding()]
@@ -304,8 +304,9 @@ function Expand-DmarcAttachments {
                 continue
             }
             if ($name.EndsWith('.zip')) {
-                foreach ($xml in @(Expand-ZipAttachment -ContentBytes $contentBytes)) {
-                    $xmlContents.Add($xml)
+                $extracted = Expand-ZipAttachment -ContentBytes $contentBytes
+                foreach ($content in @($extracted)) {
+                    $xmlContents.Add($content)
                 }
             }
             elseif ($name.EndsWith('.gz') -or $name.EndsWith('.xml.gz')) {
@@ -323,7 +324,9 @@ function Expand-DmarcAttachments {
         }
     }
 
-    return $xmlContents.ToArray()
+    return @{
+        Xml = $xmlContents.ToArray()
+    }
 }
 
 function Expand-ZipAttachment {
@@ -345,7 +348,7 @@ function Expand-ZipAttachment {
 
             $entryName = $entry.Name.ToLower()
 
-            if ($entryName.EndsWith('.xml')) {
+            if ($entryName.EndsWith('.xml') -or $entryName.EndsWith('.json')) {
                 $xmlContents.Add((Read-StreamWithLimit -Stream $entry.Open() -Limit $script:MaxDecompressedBytes -EntryName $entry.Name))
                 $entriesProcessed++
             }
@@ -715,10 +718,10 @@ function Send-DmarcRecordsToLogAnalytics {
 function Invoke-DmarcReportProcessing {
     <#
     .SYNOPSIS
-        End-to-end processing of a single mail message containing DMARC reports.
+        End-to-end processing of a single mail message containing DMARC aggregate reports.
     .DESCRIPTION
-        Fetches the message, extracts attachments, parses DMARC XML,
-        sends records to Log Analytics, and marks the message as read.
+        Fetches the message, extracts XML attachments, parses DMARC aggregate report XML,
+        sends records to Log Analytics via the Logs Ingestion API, and marks the message as read.
     .PARAMETER MessageId
         The Graph API message ID.
     .PARAMETER UserId
@@ -749,7 +752,8 @@ function Invoke-DmarcReportProcessing {
     }
 
     # Extract XML from attachments
-    $xmlContents = Expand-DmarcAttachments -Attachments $mail.Attachments
+    $extracted = Expand-DmarcAttachments -Attachments $mail.Attachments
+    $xmlContents = $extracted.Xml
     Write-Information "Extracted $($xmlContents.Count) XML content(s) from attachments."
 
     if ($xmlContents.Count -eq 0) {
@@ -758,25 +762,24 @@ function Invoke-DmarcReportProcessing {
         return
     }
 
-    # Parse all XML contents
-    $allRecords = [System.Collections.Generic.List[hashtable]]::new()
+    # Parse DMARC XML contents
+    $allDmarcRecords = [System.Collections.Generic.List[hashtable]]::new()
     foreach ($xmlContent in $xmlContents) {
         $parsed = @(ConvertFrom-DmarcXml -XmlContent $xmlContent)
         foreach ($rec in $parsed) {
-            $allRecords.Add($rec)
+            $allDmarcRecords.Add($rec)
         }
     }
 
-    Write-Information "Parsed $($allRecords.Count) total DMARC records."
+    Write-Information "Parsed $($allDmarcRecords.Count) total DMARC records."
 
-    if ($allRecords.Count -gt 0) {
-        # Send in batches of 500 (API limit guidance)
+    if ($allDmarcRecords.Count -gt 0) {
         $batchSize = 500
-        $recordsArray = $allRecords.ToArray()
+        $recordsArray = $allDmarcRecords.ToArray()
         for ($i = 0; $i -lt $recordsArray.Length; $i += $batchSize) {
             $batch = @($recordsArray | Select-Object -Skip $i -First $batchSize)
             Send-DmarcRecordsToLogAnalytics -Records $batch
-            Write-Information "Sent batch: $($batch.Count) records (offset $i)."
+            Write-Information "Sent DMARC batch: $($batch.Count) records (offset $i)."
         }
     }
 

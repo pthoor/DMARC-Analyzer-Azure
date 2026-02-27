@@ -63,7 +63,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture, data
 - Microsoft 365 tenant with Exchange Online
 - A shared mailbox to receive DMARC reports (e.g., `dmarc@example.com`)
 - Azure CLI
-- PowerShell 7.0+ (for setup scripts)
+- PowerShell 7.4+ (for setup scripts)
 - [Azure Functions Core Tools](https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local) (`func` CLI for publishing)
 - PowerShell modules for Step 3 (install once):
   ```powershell
@@ -103,6 +103,7 @@ az group create --name "rg-dmarc-prod" --location "eastus"
 
 Then deploy:
 
+**PowerShell:**
 ```powershell
 az deployment group create `
   --resource-group "rg-dmarc-prod" `
@@ -110,6 +111,7 @@ az deployment group create `
   --parameters infra/main.bicepparam
 ```
 
+**Bash:**
 ```bash
 az deployment group create \
   --resource-group "rg-dmarc-prod" \
@@ -186,6 +188,7 @@ If the DMARC mailbox already contains reports (e.g., you had DNS configured befo
 
 **Retrieve the master host key securely via ARM and trigger the backfill:**
 
+**PowerShell:**
 ```powershell
 # Get the master key from ARM (no secrets in shell history)
 $keys = az rest --method POST `
@@ -199,6 +202,7 @@ az rest --method POST `
   --skip-authorization-header
 ```
 
+**Bash:**
 ```bash
 # Get the master key from ARM
 KEY=$(az rest --method POST \
@@ -325,35 +329,47 @@ For more on Azure Monitor Alerts, see: [Microsoft Docs - Create log alert rules]
 
 ## Workbook Capabilities
 
-The Azure Monitor Workbook (`workbook/dmarc-workbook.json`) provides:
+The Azure Monitor Workbook (`workbook/dmarc-workbook.json`) is organized into 5 tabs with 43 KQL visualizations:
 
-### Overview
-- Total message volume, unique source IPs, reporters, pass rate
-- Daily pass/fail trend
-- Policy disposition breakdown
+### Executive Summary
+- Total message volume, unique source IPs, reporters, pass rate (KPI tiles)
+- Week-over-week comparison with deltas
+- Per-domain risk scoring (weighted compliance score with color-coded risk levels)
+- Daily pass/fail trend and compliance rate trend
+- Priority action items with categorized fix recommendations
 
-### Source Analysis
-- **Top 50 Source IPs** with pass rates and ASN/organization info
+### Authentication
+- Combined SPF/DKIM/DMARC authentication matrix
+- SPF and DKIM pass rate trends over time
+- Failure reason analysis (forwarding, mailing lists, local policy overrides)
+- Policy override reasons and forwarding detection
+- Envelope vs header from mismatch analysis
+- DKIM selector-level detail and alignment mode breakdown
+
+### Sources & Senders
+- **Top 50 Source IPs** with pass rates, ASN/organization info, and IP reputation links
+- Authorized vs unknown sender classification
+- Volume anomaly detection (Z-score based)
 - **GeoIP Map** showing geographic distribution of email sources
 - **Suspicious IPs** (both SPF and DKIM failing)
+- Top failing senders with remediation hints
+- Volume by sending identity (HeaderFrom)
 
-### Authentication Analysis
-- SPF and DKIM result distributions
-- Authentication by SPF domain
-- **DKIM selector-level detail** (identifies which DKIM keys are used)
-- **Alignment mode breakdown** (strict vs. relaxed)
-
-### Domain & Subdomain Analysis
-- Per-domain compliance and pass rates
+### Domain Compliance
+- Per-domain compliance scoring and pass rates
+- Domain readiness for policy enforcement progression
 - Published DMARC policies
+- Disposition over time (none/quarantine/reject)
 - **Subdomain discovery** (identify shadow IT or unauthorized subdomains)
+- DKIM selector rotation tracking
+- BIMI readiness assessment
 
-### Threat Hunting
-- Potential spoofing detection (header/envelope mismatch)
-- New source IPs in the last 24 hours
-
-### Policy Guidance
-- Built-in recommendations on progressing from `p=none` → `p=quarantine` → `p=reject`
+### Reporting & Ops
+- Report freshness monitor (color-coded per reporter)
+- Reporter coverage and missing expected reporters
+- Reports by provider and report volume over time
+- Azure Monitor alert rule templates (5 ready-to-use KQL queries)
+- Policy guidance for DMARC policy progression
 
 ## Troubleshooting
 
@@ -402,10 +418,10 @@ Invoke-Pester -Path ./tests -Output Detailed
 ```
 
 ### Test Coverage
-- ✅ **124 tests** covering all PowerShell scripts
-- ✅ Module functions (token acquisition, Graph API, XML parsing, attachment extraction)
+- ✅ **147 tests** covering all PowerShell scripts
+- ✅ Module functions (token acquisition, Graph API, DMARC XML parsing, attachment extraction)
 - ✅ Setup scripts (New-GraphSubscription.ps1, Grant-MIExchangeRBAC.ps1)
-- ✅ Azure Functions (DmarcReportProcessor, RenewGraphSubscription, CatchupProcessor)
+- ✅ Azure Functions (DmarcReportProcessor, RenewGraphSubscription, CatchupProcessor, BackfillProcessor)
 - ✅ Security validations (DTD protection, size limits, client state validation)
 - ✅ Error handling and logging patterns
 

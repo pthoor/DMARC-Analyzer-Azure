@@ -5,17 +5,16 @@
 **Date**: 2026-02-16  
 **Test Framework**: Pester 5.7.1  
 **PowerShell Version**: 7.4.13  
-**Total Tests**: 114  
+**Total Tests**: 147
 **Status**: ✅ All tests passed
 
 ```
-Tests Passed: 114, Failed: 0, Skipped: 0, Inconclusive: 0, NotRun: 0
-Test Duration: 3.95 seconds
+Tests Passed: 147, Failed: 0, Skipped: 0, Inconclusive: 0, NotRun: 0
 ```
 
 ## Test Breakdown
 
-### 1. DmarcHelpers Module (45 tests)
+### 1. DmarcHelpers Module (17 tests)
 **File**: `tests/DmarcHelpers.Tests.ps1`
 
 #### Module Import (2 tests)
@@ -26,22 +25,19 @@ Test Duration: 3.95 seconds
 - ✅ Validates IDENTITY_ENDPOINT environment variable is required
 - ✅ Validates IDENTITY_HEADER environment variable is required
 
-#### ConvertFrom-DmarcXml (7 tests)
+#### ConvertFrom-DmarcXml (5 tests)
 - ✅ Parses valid DMARC XML correctly
 - ✅ Handles multiple records in XML
 - ✅ Handles invalid XML gracefully
 - ✅ Handles empty XML gracefully
 - ✅ Prohibits DTD processing (security check for XML bomb attacks)
-- ✅ Extracts all metadata fields correctly
-- ✅ Processes authentication results properly
 
-#### Expand-DmarcAttachments (6 tests)
+#### Expand-DmarcAttachments (5 tests)
 - ✅ Handles plain XML attachments
 - ✅ Handles GZIP-compressed attachments
 - ✅ Skips oversized attachments (>25 MB security limit)
 - ✅ Skips non-file attachments
 - ✅ Skips unrecognized file extensions
-- ✅ Processes multiple attachment formats
 
 #### Send-DmarcRecordsToLogAnalytics (3 tests)
 - ✅ Validates DCR_ENDPOINT environment variable
@@ -287,7 +283,7 @@ Based on test results, the PowerShell scripts demonstrate:
 
 ## Conclusion
 
-All 114 tests pass successfully, confirming that:
+All 147 tests pass successfully, confirming that:
 - ✅ All PowerShell scripts have valid syntax and structure
 - ✅ Security controls are properly implemented
 - ✅ Error handling follows best practices
