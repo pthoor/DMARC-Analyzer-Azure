@@ -418,7 +418,7 @@ The Azure Monitor Workbook (`workbook/dmarc-workbook.json`) is organized into 5 
 - Report freshness monitor (color-coded per reporter)
 - Reporter coverage and missing expected reporters
 - Reports by provider and report volume over time
-- Azure Monitor alert rule templates (5 ready-to-use KQL queries)
+- Azure Monitor alert rule templates (4 ready-to-use KQL queries)
 - Policy guidance for DMARC policy progression
 
 ## Troubleshooting
