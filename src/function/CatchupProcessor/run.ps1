@@ -36,7 +36,7 @@ try {
 
     foreach ($message in $unreadMessages) {
         try {
-            Write-Information "Processing missed message: $($message.id) - Subject: $($message.subject)"
+            Write-Information "Processing missed message: $($message.id) - Subject: $(ConvertTo-SafeLogText -Text $message.subject)"
             Invoke-DmarcReportProcessing -MessageId $message.id
             $successCount++
         }

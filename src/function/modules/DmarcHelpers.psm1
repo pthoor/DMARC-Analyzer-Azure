@@ -138,7 +138,7 @@ function Invoke-WithRetry {
             $response   = $_.Exception.Response
             $statusCode = if ($response) { [int]$response.StatusCode } else { 0 }
 
-            if ($attempt -ge $MaxAttempts -or $statusCode -notin @(429, 503)) {
+            if ($attempt -ge $MaxAttempts -or $statusCode -notin @(429, 502, 503, 504)) {
                 throw
             }
 
@@ -179,7 +179,7 @@ function Get-MailMessage {
         [string]$Token
     )
 
-    $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages/$([System.Uri]::EscapeDataString($MessageId))"
+    $uri = "https://graph.microsoft.com/v1.0/users/$([System.Uri]::EscapeDataString($UserId))/messages/$([System.Uri]::EscapeDataString($MessageId))"
     $message = Invoke-GraphRequest -Uri $uri -Token $Token
 
     # Fetch attachments
@@ -208,33 +208,8 @@ function Set-MessageRead {
         [string]$Token
     )
 
-    $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages/$([System.Uri]::EscapeDataString($MessageId))"
+    $uri = "https://graph.microsoft.com/v1.0/users/$([System.Uri]::EscapeDataString($UserId))/messages/$([System.Uri]::EscapeDataString($MessageId))"
     $null = Invoke-GraphRequest -Uri $uri -Method PATCH -Body @{ isRead = $true } -Token $Token
-}
-
-function Get-UnreadMessages {
-    <#
-    .SYNOPSIS
-        Gets unread messages from the mailbox, optionally filtered by age.
-    .PARAMETER OlderThanMinutes
-        Only return messages received more than this many minutes ago.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$UserId,
-
-        [int]$OlderThanMinutes = 60,
-
-        [string]$Token
-    )
-
-    $cutoff = (Get-Date).AddMinutes(-$OlderThanMinutes).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-    $filter = "isRead eq false and receivedDateTime lt $cutoff and hasAttachments eq true"
-    $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages?`$filter=$filter&`$orderby=receivedDateTime asc&`$top=50&`$select=id,subject,receivedDateTime"
-
-    $result = Invoke-GraphRequest -Uri $uri -Token $Token
-    return $result.value
 }
 
 function Get-MailboxMessages {
@@ -278,7 +253,7 @@ function Get-MailboxMessages {
         $filter = "isRead eq false and $filter"
     }
 
-    $uri = "https://graph.microsoft.com/v1.0/users/$UserId/messages?`$filter=$filter&`$orderby=receivedDateTime asc&`$top=50&`$select=id,subject,receivedDateTime,isRead"
+    $uri = "https://graph.microsoft.com/v1.0/users/$([System.Uri]::EscapeDataString($UserId))/messages?`$filter=$filter&`$orderby=receivedDateTime asc&`$top=50&`$select=id,subject,receivedDateTime,isRead"
 
     $allMessages = [System.Collections.Generic.List[object]]::new()
 
@@ -311,6 +286,7 @@ function Get-MailboxMessages {
 $script:MaxAttachmentBytes  = 25 * 1024 * 1024   # 25 MB compressed input per attachment
 $script:MaxDecompressedBytes = 50 * 1024 * 1024   # 50 MB decompressed output per entry
 $script:MaxZipEntries        = 50                  # max entries processed per ZIP archive
+$script:MaxTotalDecompressedBytes = 100 * 1024 * 1024  # 100 MB decompressed output per message (all attachments)
 
 function Expand-DmarcAttachments {
     <#
@@ -319,7 +295,8 @@ function Expand-DmarcAttachments {
     .DESCRIPTION
         Handles .xml, .xml.gz, .gz, and .zip file attachments.
         Returns a hashtable with 'Xml' (array of XML strings).
-        Enforces size limits to guard against oversized or decompression-bomb attachments.
+        Enforces per-entry and cumulative size limits to guard against oversized
+        or decompression-bomb attachments.
     #>
     [CmdletBinding()]
     param(
@@ -328,8 +305,14 @@ function Expand-DmarcAttachments {
     )
 
     $xmlContents = [System.Collections.Generic.List[string]]::new()
+    $totalDecompressedBytes = [long]0
 
     foreach ($attachment in $Attachments) {
+        if ($totalDecompressedBytes -ge $script:MaxTotalDecompressedBytes) {
+            Write-Warning "Total decompressed size limit of $($script:MaxTotalDecompressedBytes) bytes reached. Remaining attachments skipped."
+            break
+        }
+
         if ($attachment.'@odata.type' -ne '#microsoft.graph.fileAttachment') {
             Write-Verbose "Skipping non-file attachment: $($attachment.name)"
             continue
@@ -349,20 +332,39 @@ function Expand-DmarcAttachments {
                 Write-Warning "Skipping attachment '$($attachment.name)': size $($contentBytes.Length) bytes exceeds limit of $($script:MaxAttachmentBytes) bytes."
                 continue
             }
+
+            # Enforce the remaining message budget during extraction so memory cannot
+            # transiently overshoot it — not just in the accounting loop below.
+            $remainingBudget = $script:MaxTotalDecompressedBytes - $totalDecompressedBytes
+
+            $extracted = @()
             if ($name.EndsWith('.zip')) {
-                $extracted = Expand-ZipAttachment -ContentBytes $contentBytes
-                foreach ($content in @($extracted)) {
-                    $xmlContents.Add($content)
-                }
+                $extracted = @(Expand-ZipAttachment -ContentBytes $contentBytes -ByteBudget $remainingBudget)
             }
             elseif ($name.EndsWith('.gz') -or $name.EndsWith('.xml.gz')) {
-                $xmlContents.Add((Expand-GzipAttachment -ContentBytes $contentBytes))
+                $extracted = @(Expand-GzipAttachment -ContentBytes $contentBytes -Limit ([Math]::Min($script:MaxDecompressedBytes, $remainingBudget)))
             }
             elseif ($name.EndsWith('.xml')) {
-                $xmlContents.Add([System.Text.Encoding]::UTF8.GetString($contentBytes))
+                # UTF-8 decoding yields at most one char per byte, so the raw byte
+                # length is the decoded size for budget purposes.
+                if ($contentBytes.Length -gt $remainingBudget) {
+                    Write-Warning "Skipping attachment '$($attachment.name)': would exceed the total decompressed size limit of $($script:MaxTotalDecompressedBytes) bytes."
+                }
+                else {
+                    $extracted = @([System.Text.Encoding]::UTF8.GetString($contentBytes))
+                }
             }
             else {
                 Write-Verbose "Skipping unrecognized attachment: $($attachment.name)"
+            }
+
+            foreach ($content in $extracted) {
+                $totalDecompressedBytes += [System.Text.Encoding]::UTF8.GetByteCount($content)
+                if ($totalDecompressedBytes -gt $script:MaxTotalDecompressedBytes) {
+                    Write-Warning "Attachment '$($attachment.name)' exceeds the total decompressed size limit of $($script:MaxTotalDecompressedBytes) bytes. Remaining content skipped."
+                    break
+                }
+                $xmlContents.Add($content)
             }
         }
         catch {
@@ -377,10 +379,18 @@ function Expand-DmarcAttachments {
 
 function Expand-ZipAttachment {
     [CmdletBinding()]
-    param([byte[]]$ContentBytes)
+    param(
+        [byte[]]$ContentBytes,
+
+        # Cumulative decompressed-byte budget for this archive. Bounds total memory
+        # even when every individual entry is under the per-entry limit.
+        [long]$ByteBudget = $script:MaxTotalDecompressedBytes
+    )
 
     $xmlContents = [System.Collections.Generic.List[string]]::new()
     $memStream = [System.IO.MemoryStream]::new($ContentBytes)
+    $archive = $null
+    $bytesExtracted = [long]0
 
     try {
         $archive = [System.IO.Compression.ZipArchive]::new($memStream, [System.IO.Compression.ZipArchiveMode]::Read)
@@ -392,10 +402,26 @@ function Expand-ZipAttachment {
                 break
             }
 
+            $remainingBudget = $ByteBudget - $bytesExtracted
+            if ($remainingBudget -le 0) {
+                Write-Warning "ZIP decompression budget of $ByteBudget bytes exhausted. Remaining entries skipped."
+                break
+            }
+            $entryLimit = [Math]::Min($script:MaxDecompressedBytes, $remainingBudget)
+
             $entryName = $entry.Name.ToLower()
 
+            # A failing entry (corrupt or over its size limit) is skipped so it cannot
+            # discard entries already extracted from the same archive.
             if ($entryName.EndsWith('.xml')) {
-                $xmlContents.Add((Read-StreamWithLimit -Stream $entry.Open() -Limit $script:MaxDecompressedBytes -EntryName $entry.Name))
+                try {
+                    $content = Read-StreamWithLimit -Stream $entry.Open() -Limit $entryLimit -EntryName $entry.Name
+                    $bytesExtracted += [System.Text.Encoding]::UTF8.GetByteCount($content)
+                    $xmlContents.Add($content)
+                }
+                catch {
+                    Write-Warning "Skipping ZIP entry '$($entry.Name)': $_"
+                }
                 $entriesProcessed++
             }
             elseif ($entryName.EndsWith('.gz')) {
@@ -405,7 +431,12 @@ function Expand-ZipAttachment {
                     $entryMemStream = [System.IO.MemoryStream]::new()
                     try {
                         Copy-StreamWithLimit -Source $entryStream -Destination $entryMemStream -Limit $script:MaxAttachmentBytes -EntryName $entry.Name
-                        $xmlContents.Add((Expand-GzipAttachment -ContentBytes $entryMemStream.ToArray()))
+                        $content = Expand-GzipAttachment -ContentBytes $entryMemStream.ToArray() -Limit $entryLimit
+                        $bytesExtracted += [System.Text.Encoding]::UTF8.GetByteCount($content)
+                        $xmlContents.Add($content)
+                    }
+                    catch {
+                        Write-Warning "Skipping ZIP entry '$($entry.Name)': $_"
                     }
                     finally {
                         $entryMemStream.Dispose()
@@ -417,10 +448,11 @@ function Expand-ZipAttachment {
                 $entriesProcessed++
             }
         }
-
-        $archive.Dispose()
     }
     finally {
+        if ($null -ne $archive) {
+            $archive.Dispose()
+        }
         $memStream.Dispose()
     }
 
@@ -429,14 +461,18 @@ function Expand-ZipAttachment {
 
 function Expand-GzipAttachment {
     [CmdletBinding()]
-    param([byte[]]$ContentBytes)
+    param(
+        [byte[]]$ContentBytes,
+
+        [long]$Limit = $script:MaxDecompressedBytes
+    )
 
     $inputStream = [System.IO.MemoryStream]::new($ContentBytes)
     $gzipStream = [System.IO.Compression.GZipStream]::new($inputStream, [System.IO.Compression.CompressionMode]::Decompress)
     $outputStream = [System.IO.MemoryStream]::new()
 
     try {
-        Copy-StreamWithLimit -Source $gzipStream -Destination $outputStream -Limit $script:MaxDecompressedBytes -EntryName 'gzip'
+        Copy-StreamWithLimit -Source $gzipStream -Destination $outputStream -Limit $Limit -EntryName 'gzip'
         return [System.Text.Encoding]::UTF8.GetString($outputStream.ToArray())
     }
     finally {
@@ -577,7 +613,16 @@ function ConvertFrom-DmarcXml {
     $domain = $policy.domain
     $policyP   = $policy.p
     $policySp  = $policy.sp
-    $policyPct = if ($policy.pct) { [int]$policy.pct } else { 100 }
+    $policyPct = 100
+    if ($policy.pct) {
+        $parsedPct = 0
+        if ([int]::TryParse([string]$policy.pct, [ref]$parsedPct)) {
+            $policyPct = $parsedPct
+        }
+        else {
+            Write-Warning "Report '$reportId' has a non-numeric <pct> value '$($policy.pct)'; defaulting to 100."
+        }
+    }
     $adkim     = $policy.adkim
     $aspf      = $policy.aspf
     $fo        = $policy.fo
@@ -608,117 +653,130 @@ function ConvertFrom-DmarcXml {
 
     foreach ($rec in $recordElements) {
         $recordIdx++
-        $row = $rec.row
-        $identifiers = $rec.identifiers
-        $authResults = $rec.auth_results
+        try {
+            $row = $rec.row
+            $identifiers = $rec.identifiers
+            $authResults = $rec.auth_results
 
-        $reasonType = if ($row.policy_evaluated.reason -is [System.Array]) {
-            ($row.policy_evaluated.reason | ForEach-Object { $_.type }) -join '; '
-        } else { $row.policy_evaluated.reason.type }
+            $reasonType = if ($row.policy_evaluated.reason -is [System.Array]) {
+                ($row.policy_evaluated.reason | ForEach-Object { $_.type }) -join '; '
+            } else { $row.policy_evaluated.reason.type }
 
-        $reasonComment = if ($row.policy_evaluated.reason -is [System.Array]) {
-            ($row.policy_evaluated.reason | ForEach-Object { $_.comment }) -join '; '
-        } else { $row.policy_evaluated.reason.comment }
+            $reasonComment = if ($row.policy_evaluated.reason -is [System.Array]) {
+                ($row.policy_evaluated.reason | ForEach-Object { $_.comment }) -join '; '
+            } else { $row.policy_evaluated.reason.comment }
 
-        $overrideReasonCategory = Get-OverrideReasonCategory -ReasonType $reasonType
+            $overrideReasonCategory = Get-OverrideReasonCategory -ReasonType $reasonType
 
-        # ── Primary DKIM result ──
-        $dkimResults = @($authResults.dkim)
-        $primaryDkim = $null
-        $primaryDkimDomain = $null
-        $primaryDkimSelector = $null
-        $dkimJson = '[]'
+            # ── Primary DKIM result ──
+            $dkimResults = @($authResults.dkim)
+            $primaryDkim = $null
+            $primaryDkimDomain = $null
+            $primaryDkimSelector = $null
+            $dkimJson = '[]'
 
-        if ($dkimResults.Count -gt 0 -and $dkimResults[0]) {
-            $primaryDkim = $dkimResults[0].result
-            $primaryDkimDomain = $dkimResults[0].domain
-            $primaryDkimSelector = $dkimResults[0].selector
+            if ($dkimResults.Count -gt 0 -and $dkimResults[0]) {
+                $primaryDkim = $dkimResults[0].result
+                $primaryDkimDomain = $dkimResults[0].domain
+                $primaryDkimSelector = $dkimResults[0].selector
 
-            $dkimArray = foreach ($d in $dkimResults) {
-                @{
-                    domain       = $d.domain
-                    result       = $d.result
-                    selector     = $d.selector
-                    human_result = $d.human_result
+                $dkimArray = foreach ($d in $dkimResults) {
+                    @{
+                        domain       = $d.domain
+                        result       = $d.result
+                        selector     = $d.selector
+                        human_result = $d.human_result
+                    }
                 }
+                $dkimJson = ($dkimArray | ConvertTo-Json -Depth 5 -Compress)
+                if ($dkimResults.Count -eq 1) { $dkimJson = "[$dkimJson]" }
             }
-            $dkimJson = ($dkimArray | ConvertTo-Json -Depth 5 -Compress)
-            if ($dkimResults.Count -eq 1) { $dkimJson = "[$dkimJson]" }
-        }
 
-        # ── Primary SPF result ──
-        $spfResults = @($authResults.spf)
-        $primarySpf = $null
-        $primarySpfDomain = $null
-        $primarySpfScope = $null
-        $spfJson = '[]'
+            # ── Primary SPF result ──
+            $spfResults = @($authResults.spf)
+            $primarySpf = $null
+            $primarySpfDomain = $null
+            $primarySpfScope = $null
+            $spfJson = '[]'
 
-        if ($spfResults.Count -gt 0 -and $spfResults[0]) {
-            $primarySpf = $spfResults[0].result
-            $primarySpfDomain = $spfResults[0].domain
-            $primarySpfScope = $spfResults[0].scope
+            if ($spfResults.Count -gt 0 -and $spfResults[0]) {
+                $primarySpf = $spfResults[0].result
+                $primarySpfDomain = $spfResults[0].domain
+                $primarySpfScope = $spfResults[0].scope
 
-            $spfArray = foreach ($s in $spfResults) {
-                @{
-                    domain = $s.domain
-                    result = $s.result
-                    scope  = $s.scope
+                $spfArray = foreach ($s in $spfResults) {
+                    @{
+                        domain = $s.domain
+                        result = $s.result
+                        scope  = $s.scope
+                    }
                 }
+                $spfJson = ($spfArray | ConvertTo-Json -Depth 5 -Compress)
+                if ($spfResults.Count -eq 1) { $spfJson = "[$spfJson]" }
             }
-            $spfJson = ($spfArray | ConvertTo-Json -Depth 5 -Compress)
-            if ($spfResults.Count -eq 1) { $spfJson = "[$spfJson]" }
+
+            # Tolerate non-numeric <count> so one malformed record cannot poison the
+            # whole report (the message would never be marked read and retry forever).
+            $messageCount = 0
+            if (-not [int]::TryParse([string]$row.count, [ref]$messageCount)) {
+                Write-Warning "Record $recordIdx in report '$reportId' has a non-numeric <count> value '$($row.count)'; defaulting to 0."
+                $messageCount = 0
+            }
+
+            # ── Build flat record ──
+            $record = @{
+                TimeGenerated                  = [datetime]::UtcNow.ToString('o')
+                ReportOrgName                  = $orgName
+                ReportEmail                    = $email
+                ReportExtraContactInfo         = $extraContact
+                ReportId                       = $reportId
+                SourceMessageId                = $SourceMessageId
+                IngestionRunId                 = $IngestionRunId
+                DuplicateTelemetryKey          = $duplicateTelemetryKey
+                ReportDateRangeBegin           = $dateBegin
+                ReportDateRangeEnd             = $dateEnd
+                Domain                         = $domain
+                PolicyPublished_p              = $policyP
+                PolicyPublished_sp             = $policySp
+                PolicyPublished_pct            = $policyPct
+                PolicyPublished_adkim          = $adkim
+                PolicyPublished_aspf           = $aspf
+                PolicyPublished_fo             = $fo
+                SourceIP                       = $row.source_ip
+                MessageCount                   = $messageCount
+                PolicyEvaluated_disposition    = $row.policy_evaluated.disposition
+                PolicyEvaluated_dkim           = $row.policy_evaluated.dkim
+                PolicyEvaluated_spf            = $row.policy_evaluated.spf
+                PolicyEvaluated_reason_type    = $reasonType
+                PolicyEvaluated_reason_comment = $reasonComment
+                OverrideReasonCategory         = $overrideReasonCategory
+                HeaderFrom                     = $identifiers.header_from
+                EnvelopeFrom                   = $identifiers.envelope_from
+                EnvelopeTo                     = $identifiers.envelope_to
+                DkimResult                     = $primaryDkim
+                DkimDomain                     = $primaryDkimDomain
+                DkimSelector                   = $primaryDkimSelector
+                SpfResult                      = $primarySpf
+                SpfDomain                      = $primarySpfDomain
+                SpfScope                       = $primarySpfScope
+                DkimAuthResults                = $dkimJson
+                SpfAuthResults                 = $spfJson
+                RecordIndex                    = $recordIdx
+                Aligned_dkim                   = ($row.policy_evaluated.dkim -ieq 'pass')
+                Aligned_spf                    = ($row.policy_evaluated.spf  -ieq 'pass')
+                DmarcPass                      = ($row.policy_evaluated.dkim -ieq 'pass' -or $row.policy_evaluated.spf -ieq 'pass')
+            }
+
+            # Deterministic hash for cross-run deduplication (SourceMessageId|ReportId|RecordIndex|SourceIP|HeaderFrom)
+            $hashInput       = [System.Text.Encoding]::UTF8.GetBytes(
+                "$SourceMessageId|$reportId|$recordIdx|$($row.source_ip)|$($identifiers.header_from)")
+            $record['MessageHash'] = [System.BitConverter]::ToString($sha256.ComputeHash($hashInput)).Replace('-', '').ToLower()
+
+            $records.Add($record)
         }
-
-        # ── Build flat record ──
-        $record = @{
-            TimeGenerated                  = [datetime]::UtcNow.ToString('o')
-            ReportOrgName                  = $orgName
-            ReportEmail                    = $email
-            ReportExtraContactInfo         = $extraContact
-            ReportId                       = $reportId
-            SourceMessageId                = $SourceMessageId
-            IngestionRunId                 = $IngestionRunId
-            DuplicateTelemetryKey          = $duplicateTelemetryKey
-            ReportDateRangeBegin           = $dateBegin
-            ReportDateRangeEnd             = $dateEnd
-            Domain                         = $domain
-            PolicyPublished_p              = $policyP
-            PolicyPublished_sp             = $policySp
-            PolicyPublished_pct            = $policyPct
-            PolicyPublished_adkim          = $adkim
-            PolicyPublished_aspf           = $aspf
-            PolicyPublished_fo             = $fo
-            SourceIP                       = $row.source_ip
-            MessageCount                   = [int]$row.count
-            PolicyEvaluated_disposition    = $row.policy_evaluated.disposition
-            PolicyEvaluated_dkim           = $row.policy_evaluated.dkim
-            PolicyEvaluated_spf            = $row.policy_evaluated.spf
-            PolicyEvaluated_reason_type    = $reasonType
-            PolicyEvaluated_reason_comment = $reasonComment
-            OverrideReasonCategory         = $overrideReasonCategory
-            HeaderFrom                     = $identifiers.header_from
-            EnvelopeFrom                   = $identifiers.envelope_from
-            EnvelopeTo                     = $identifiers.envelope_to
-            DkimResult                     = $primaryDkim
-            DkimDomain                     = $primaryDkimDomain
-            DkimSelector                   = $primaryDkimSelector
-            SpfResult                      = $primarySpf
-            SpfDomain                      = $primarySpfDomain
-            SpfScope                       = $primarySpfScope
-            DkimAuthResults                = $dkimJson
-            SpfAuthResults                 = $spfJson
-            RecordIndex                    = $recordIdx
-            Aligned_dkim                   = ($row.policy_evaluated.dkim -ieq 'pass')
-            Aligned_spf                    = ($row.policy_evaluated.spf  -ieq 'pass')
-            DmarcPass                      = ($row.policy_evaluated.dkim -ieq 'pass' -or $row.policy_evaluated.spf -ieq 'pass')
+        catch {
+            Write-Warning "Skipping malformed record $recordIdx in report '$reportId': $_"
         }
-
-        # Deterministic hash for cross-run deduplication (SourceMessageId|ReportId|RecordIndex|SourceIP|HeaderFrom)
-        $hashInput       = [System.Text.Encoding]::UTF8.GetBytes(
-            "$SourceMessageId|$reportId|$recordIdx|$($row.source_ip)|$($identifiers.header_from)")
-        $record['MessageHash'] = [System.BitConverter]::ToString($sha256.ComputeHash($hashInput)).Replace('-', '').ToLower()
-
-        $records.Add($record)
     }
 
     $sha256.Dispose()
@@ -744,6 +802,32 @@ function Get-OverrideReasonCategory {
     }
 
     return 'other'
+}
+
+function ConvertTo-SafeLogText {
+    <#
+    .SYNOPSIS
+        Sanitizes externally controlled text (e.g., mail subjects) before logging.
+    .DESCRIPTION
+        Strips control characters (including CR/LF, preventing forged log lines)
+        and truncates to a maximum length.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Text,
+
+        [int]$MaxLength = 200
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+
+    $sanitized = $Text -replace '\p{C}+', ' '
+    if ($sanitized.Length -gt $MaxLength) {
+        $sanitized = $sanitized.Substring(0, $MaxLength) + '...'
+    }
+    return $sanitized
 }
 
 function Convert-EpochToIso {
@@ -848,8 +932,7 @@ function Invoke-DmarcReportProcessing {
 
     # Fetch message and attachments
     $mail = Get-MailMessage -UserId $UserId -MessageId $MessageId -Token $graphToken
-    $subject = $mail.Message.subject
-    Write-Information "Message subject: $subject"
+    Write-Information "Message subject: $(ConvertTo-SafeLogText -Text $mail.Message.subject)"
 
     if (-not $mail.Attachments -or $mail.Attachments.Count -eq 0) {
         Write-Warning "Message $MessageId has no attachments. Marking as read."
@@ -883,7 +966,8 @@ function Invoke-DmarcReportProcessing {
         $batchSize = 500
         $recordsArray = $allDmarcRecords.ToArray()
         for ($i = 0; $i -lt $recordsArray.Length; $i += $batchSize) {
-            $batch = @($recordsArray | Select-Object -Skip $i -First $batchSize)
+            $end = [Math]::Min($i + $batchSize, $recordsArray.Length) - 1
+            $batch = @($recordsArray[$i..$end])
             Send-DmarcRecordsToLogAnalytics -Records $batch
             Write-Information "Sent DMARC batch: $($batch.Count) records (offset $i)."
         }
@@ -900,10 +984,10 @@ Export-ModuleMember -Function @(
     'Invoke-GraphRequest'
     'Get-MailMessage'
     'Set-MessageRead'
-    'Get-UnreadMessages'
     'Get-MailboxMessages'
     'Expand-DmarcAttachments'
     'ConvertFrom-DmarcXml'
+    'ConvertTo-SafeLogText'
     'Send-DmarcRecordsToLogAnalytics'
     'Invoke-DmarcReportProcessing'
 )

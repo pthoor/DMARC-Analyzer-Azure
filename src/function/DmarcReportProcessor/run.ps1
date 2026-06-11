@@ -54,22 +54,29 @@ try {
     }
 
     # Validate client state — defence-in-depth even though Event Grid delivery
-    # is internal to Azure. If GRAPH_CLIENT_STATE is not set, log a warning
-    # so operators notice the misconfiguration rather than silently skipping.
+    # is internal to Azure. Fail closed: without a configured GRAPH_CLIENT_STATE
+    # there is no way to authenticate the notification, so refuse to process it.
+    # Throwing lets Event Grid retry the event once the operator fixes the setting.
     $expectedClientState = $env:GRAPH_CLIENT_STATE
-    if (-not $expectedClientState) {
-        Write-Warning "GRAPH_CLIENT_STATE is not configured. Client state validation is disabled — configure this setting to enable notification validation."
+    if (-not $expectedClientState -or $expectedClientState -like '@Microsoft.KeyVault*') {
+        Write-Error "GRAPH_CLIENT_STATE is not configured (or its Key Vault reference is unresolved). Refusing to process the notification — client state validation is mandatory."
+        throw "GRAPH_CLIENT_STATE is not configured. Notification rejected."
     }
-    if ($expectedClientState) {
-        # Try to read clientState from the same flexible structure as resourceData
-        $receivedClientState = $eventGridEvent.data.clientState
-        if (-not $receivedClientState -and $resourceData) {
-            $receivedClientState = $resourceData.clientState
-        }
-        if ($receivedClientState -cne $expectedClientState) {
-            Write-Error "Client state mismatch. The received client state does not match the expected value."
-            return
-        }
+
+    # Try to read clientState from the same flexible structure as resourceData
+    $receivedClientState = $eventGridEvent.data.clientState
+    if (-not $receivedClientState -and $resourceData) {
+        $receivedClientState = $resourceData.clientState
+    }
+
+    # Constant-time comparison (case-sensitive) so the secret cannot be probed
+    # byte-by-byte via response timing. FixedTimeEquals returns false on length mismatch.
+    $expectedBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$expectedClientState)
+    $receivedBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$receivedClientState)
+    if (-not [System.Security.Cryptography.CryptographicOperations]::FixedTimeEquals($expectedBytes, $receivedBytes)) {
+        # Do not throw — a spoofed or stale notification must not be retried.
+        Write-Error "Client state mismatch. The received client state does not match the expected value."
+        return
     }
 
     # Extract message ID from the validated notification using fallback paths.
