@@ -333,15 +333,26 @@ function Expand-DmarcAttachments {
                 continue
             }
 
+            # Enforce the remaining message budget during extraction so memory cannot
+            # transiently overshoot it — not just in the accounting loop below.
+            $remainingBudget = $script:MaxTotalDecompressedBytes - $totalDecompressedBytes
+
             $extracted = @()
             if ($name.EndsWith('.zip')) {
-                $extracted = @(Expand-ZipAttachment -ContentBytes $contentBytes -ByteBudget ($script:MaxTotalDecompressedBytes - $totalDecompressedBytes))
+                $extracted = @(Expand-ZipAttachment -ContentBytes $contentBytes -ByteBudget $remainingBudget)
             }
             elseif ($name.EndsWith('.gz') -or $name.EndsWith('.xml.gz')) {
-                $extracted = @(Expand-GzipAttachment -ContentBytes $contentBytes)
+                $extracted = @(Expand-GzipAttachment -ContentBytes $contentBytes -Limit ([Math]::Min($script:MaxDecompressedBytes, $remainingBudget)))
             }
             elseif ($name.EndsWith('.xml')) {
-                $extracted = @([System.Text.Encoding]::UTF8.GetString($contentBytes))
+                # UTF-8 decoding yields at most one char per byte, so the raw byte
+                # length is the decoded size for budget purposes.
+                if ($contentBytes.Length -gt $remainingBudget) {
+                    Write-Warning "Skipping attachment '$($attachment.name)': would exceed the total decompressed size limit of $($script:MaxTotalDecompressedBytes) bytes."
+                }
+                else {
+                    $extracted = @([System.Text.Encoding]::UTF8.GetString($contentBytes))
+                }
             }
             else {
                 Write-Verbose "Skipping unrecognized attachment: $($attachment.name)"

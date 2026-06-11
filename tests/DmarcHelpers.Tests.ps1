@@ -710,6 +710,29 @@ Describe 'DmarcHelpers Module' {
             $result.Xml.Count | Should -Be 1
         }
 
+        It 'Should enforce the remaining budget while decompressing standalone GZIP attachments' {
+            $xml = '<feedback>' + ('x' * 2000) + '</feedback>'
+            $xmlBytes = [System.Text.Encoding]::UTF8.GetBytes($xml)
+
+            $memStream = [System.IO.MemoryStream]::new()
+            $gzipStream = [System.IO.Compression.GZipStream]::new($memStream, [System.IO.Compression.CompressionMode]::Compress)
+            $gzipStream.Write($xmlBytes, 0, $xmlBytes.Length)
+            $gzipStream.Close()
+            $gzipBytes = $memStream.ToArray()
+            $memStream.Dispose()
+
+            $attachment = @{
+                '@odata.type' = '#microsoft.graph.fileAttachment'
+                'name' = 'report.xml.gz'
+                'contentBytes' = [System.Convert]::ToBase64String($gzipBytes)
+            }
+
+            # Decompressed size (2021 bytes) exceeds the 1024-byte budget, so the
+            # copy must abort during extraction rather than after.
+            $result = Expand-DmarcAttachments -Attachments @($attachment) -WarningAction SilentlyContinue
+            $result.Xml.Count | Should -Be 0
+        }
+
         It 'Should enforce the budget across entries within a single ZIP archive' {
             $xml = '<feedback>' + ('x' * 600) + '</feedback>'
             $xmlBytes = [System.Text.Encoding]::UTF8.GetBytes($xml)
