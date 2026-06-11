@@ -60,7 +60,7 @@ try {
         Write-Information $msg
         Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
             StatusCode  = 200
-            Body        = (@{ message = $msg; processed = 0; failed = 0; skipped = 0 } | ConvertTo-Json)
+            Body        = (@{ message = $msg; processed = 0; failed = 0 } | ConvertTo-Json)
             ContentType = 'application/json'
         })
         return
@@ -70,11 +70,10 @@ try {
 
     $successCount = 0
     $failCount = 0
-    $skippedCount = 0
 
     foreach ($message in $messages) {
         try {
-            Write-Information "Processing message: $($message.id) - Subject: $($message.subject) - Received: $($message.receivedDateTime)"
+            Write-Information "Processing message: $($message.id) - Subject: $(ConvertTo-SafeLogText -Text $message.subject) - Received: $($message.receivedDateTime)"
             Invoke-DmarcReportProcessing -MessageId $message.id
             $successCount++
         }
@@ -91,7 +90,7 @@ try {
         }
     }
 
-    $summary = "Backfill complete. Days=$days, IncludeRead=$includeRead, Processed=$successCount, Failed=$failCount, Skipped=$skippedCount"
+    $summary = "Backfill complete. Days=$days, IncludeRead=$includeRead, Processed=$successCount, Failed=$failCount"
     Write-Information $summary
 
     Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
@@ -103,7 +102,6 @@ try {
             found     = $messages.Count
             processed = $successCount
             failed    = $failCount
-            skipped   = $skippedCount
         } | ConvertTo-Json)
         ContentType = 'application/json'
     })
@@ -113,7 +111,7 @@ catch {
     Write-Error $_.ScriptStackTrace
     Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
         StatusCode  = 500
-        Body        = (@{ error = "Backfill failed: $($_.Exception.Message)" } | ConvertTo-Json)
+        Body        = (@{ error = 'Backfill failed due to an internal error. Check the function logs for details.' } | ConvertTo-Json)
         ContentType = 'application/json'
     })
 }

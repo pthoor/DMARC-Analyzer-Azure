@@ -271,7 +271,7 @@ curl -s -X POST "https://<function-app-name>.azurewebsites.net/api/BackfillProce
 | `days` | `7` | How far back to look (1–365) |
 | `includeRead` | `false` | Set to `true` to re-process already-read messages |
 
-The function returns a JSON summary with `processed`, `failed`, and `skipped` counts. Messages are marked as read after processing, so running it twice is safe — already-processed messages are skipped by default.
+The function returns a JSON summary with `processed` and `failed` counts. Messages are marked as read after processing, so running it twice is safe — already-processed messages are skipped by default.
 
 > **Tip:** If you have more than 7 days of historical reports, increase the window: `?days=30&includeRead=true`
 

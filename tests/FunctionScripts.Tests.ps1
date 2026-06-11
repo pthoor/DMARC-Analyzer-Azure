@@ -46,17 +46,22 @@ Describe 'DmarcReportProcessor/run.ps1' {
             $content | Should -Match '(?s)clientState.*not match'
         }
 
-        It 'Should use case-sensitive comparison for client state' {
+        It 'Should use constant-time comparison for client state' {
             $content = Get-Content $scriptPath -Raw
-            # -cne is the case-sensitive operator; -ne would allow case variants of the secret
-            $content | Should -Match '\-cne\s+\$expectedClientState'
-            $content | Should -Not -Match '[^c]-ne\s+\$expectedClientState'
+            # FixedTimeEquals is case-sensitive and does not leak the secret via timing
+            $content | Should -Match 'FixedTimeEquals'
+            $content | Should -Not -Match '-c?ne\s+\$expectedClientState'
         }
 
-        It 'Should warn if GRAPH_CLIENT_STATE is not configured' {
+        It 'Should fail closed if GRAPH_CLIENT_STATE is not configured' {
             $content = Get-Content $scriptPath -Raw
             $content | Should -Match 'if.*-not.*\$expectedClientState'
-            $content | Should -Match 'Write-Warning.*GRAPH_CLIENT_STATE'
+            $content | Should -Match '(?s)GRAPH_CLIENT_STATE is not configured.*throw'
+        }
+
+        It 'Should detect unresolved Key Vault references for GRAPH_CLIENT_STATE' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match '@Microsoft\.KeyVault'
         }
 
         It 'Should not log sensitive clientState value' {
@@ -497,6 +502,20 @@ Describe 'BackfillProcessor/run.ps1' {
         }
     }
 
+    Context 'Security' {
+        It 'Should not return internal exception details in error responses' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Check the function logs'
+            # Exception details may be logged, but must not appear in a response Body
+            $content | Should -Not -Match 'Body\s*=.*Exception\.Message'
+        }
+
+        It 'Should sanitize message subjects before logging' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'ConvertTo-SafeLogText'
+        }
+    }
+
     Context 'Logging' {
         It 'Should log backfill start with parameters' {
             $content = Get-Content $scriptPath -Raw
@@ -554,20 +573,22 @@ Describe 'SetupHelper/run.ps1' {
             $content | Should -Match 'Missing required fields'
         }
 
-        It 'Should accept HTTPS scheme for notificationUrl' {
-            $content = Get-Content $scriptPath -Raw
-            $content | Should -Match "Scheme -ne 'https'"
-        }
-
         It 'Should accept EventGrid scheme for notificationUrl' {
             $content = Get-Content $scriptPath -Raw
             # EventGrid: is the correct scheme for Graph subscriptions delivered via Event Grid partner topics
-            $content | Should -Match "Scheme -ne 'eventgrid'"
+            $content | Should -Match "Scheme -eq 'eventgrid'"
         }
 
-        It 'Should reject non-HTTPS non-EventGrid schemes' {
+        It 'Should allow HTTPS notificationUrl only with explicit opt-in' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'notificationUrl must use the HTTPS or EventGrid scheme'
+            # A direct webhook URL would receive the clientState secret, so it must be opt-in
+            $content | Should -Match 'ALLOW_WEBHOOK_NOTIFICATION_URL'
+            $content | Should -Match "\`$allowWebhookUrl -and \`$parsedUri\.Scheme -eq 'https'"
+        }
+
+        It 'Should reject disallowed notificationUrl schemes' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'notificationUrl must use the EventGrid scheme'
         }
 
         It 'Should reject malformed URLs' {

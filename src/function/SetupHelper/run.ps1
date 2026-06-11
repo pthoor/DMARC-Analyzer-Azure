@@ -9,6 +9,10 @@
 #
 # Reads MAILBOX_USER_ID and GRAPH_CLIENT_STATE from app settings (env vars).
 # Accepts notificationUrl and expirationDateTime in the request body.
+# notificationUrl must use the "EventGrid:" scheme; direct "https" webhook URLs
+# are rejected unless the ALLOW_WEBHOOK_NOTIFICATION_URL=true app setting is present
+# (they would deliver notifications, including the clientState secret, to an
+# arbitrary external endpoint).
 
 param($Request)
 
@@ -27,15 +31,20 @@ try {
     }
 
     # Validate that notificationUrl is a well-formed URL with an accepted scheme.
-    # Graph subscriptions delivered via Event Grid use the "EventGrid:" scheme;
-    # direct webhook subscriptions use "https". Both are valid here.
-    # This check only enforces allowed schemes; host allow-listing is not applied here.
+    # This pipeline delivers Graph notifications via Event Grid, so only the
+    # "EventGrid:" scheme is accepted by default. A direct "https" webhook URL would
+    # send notifications — including the GRAPH_CLIENT_STATE secret — to an arbitrary
+    # external endpoint, so it requires explicit opt-in via the
+    # ALLOW_WEBHOOK_NOTIFICATION_URL=true app setting.
+    $allowWebhookUrl = $env:ALLOW_WEBHOOK_NOTIFICATION_URL -eq 'true'
     try {
         $parsedUri = [System.Uri]::new([string]$body.notificationUrl)
-        if ($parsedUri.Scheme -ne 'https' -and $parsedUri.Scheme -ne 'eventgrid') {
+        $schemeAllowed = ($parsedUri.Scheme -eq 'eventgrid') -or
+                         ($allowWebhookUrl -and $parsedUri.Scheme -eq 'https')
+        if (-not $schemeAllowed) {
             Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
                 StatusCode  = 400
-                Body        = (@{ error = 'notificationUrl must use the HTTPS or EventGrid scheme.' } | ConvertTo-Json)
+                Body        = (@{ error = 'notificationUrl must use the EventGrid scheme. Direct HTTPS webhook URLs require the ALLOW_WEBHOOK_NOTIFICATION_URL=true app setting.' } | ConvertTo-Json)
                 ContentType = 'application/json'
             })
             return

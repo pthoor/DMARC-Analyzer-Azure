@@ -30,10 +30,10 @@ Describe 'DmarcHelpers Module' {
             $exportedFunctions | Should -Contain 'Invoke-GraphRequest'
             $exportedFunctions | Should -Contain 'Get-MailMessage'
             $exportedFunctions | Should -Contain 'Set-MessageRead'
-            $exportedFunctions | Should -Contain 'Get-UnreadMessages'
             $exportedFunctions | Should -Contain 'Get-MailboxMessages'
             $exportedFunctions | Should -Contain 'Expand-DmarcAttachments'
             $exportedFunctions | Should -Contain 'ConvertFrom-DmarcXml'
+            $exportedFunctions | Should -Contain 'ConvertTo-SafeLogText'
             $exportedFunctions | Should -Contain 'Send-DmarcRecordsToLogAnalytics'
             $exportedFunctions | Should -Contain 'Invoke-DmarcReportProcessing'
         }
@@ -485,6 +485,87 @@ Describe 'DmarcHelpers Module' {
             $record.MessageHash | Should -Not -Be $rec3.MessageHash
         }
 
+        It 'Should tolerate a non-numeric <count> value instead of failing the report' {
+            $badCountXml = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<feedback>
+  <report_metadata>
+    <org_name>test.com</org_name>
+    <email>test@test.com</email>
+    <report_id>bad-count-test</report_id>
+    <date_range><begin>1704067200</begin><end>1704153599</end></date_range>
+  </report_metadata>
+  <policy_published>
+    <domain>example.com</domain>
+    <p>none</p>
+    <pct>100</pct>
+  </policy_published>
+  <record>
+    <row>
+      <source_ip>1.1.1.1</source_ip>
+      <count>abc</count>
+      <policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated>
+    </row>
+    <identifiers><header_from>example.com</header_from></identifiers>
+    <auth_results>
+      <dkim><domain>example.com</domain><result>pass</result></dkim>
+      <spf><domain>example.com</domain><result>pass</result></spf>
+    </auth_results>
+  </record>
+  <record>
+    <row>
+      <source_ip>2.2.2.2</source_ip>
+      <count>7</count>
+      <policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated>
+    </row>
+    <identifiers><header_from>example.com</header_from></identifiers>
+    <auth_results>
+      <dkim><domain>example.com</domain><result>pass</result></dkim>
+      <spf><domain>example.com</domain><result>pass</result></spf>
+    </auth_results>
+  </record>
+</feedback>
+'@
+            $result = @(ConvertFrom-DmarcXml -XmlContent $badCountXml -WarningAction SilentlyContinue)
+            $result.Length | Should -Be 2
+            $result[0].MessageCount | Should -Be 0
+            $result[1].MessageCount | Should -Be 7
+        }
+
+        It 'Should default a non-numeric <pct> value to 100 instead of failing the report' {
+            $badPctXml = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<feedback>
+  <report_metadata>
+    <org_name>test.com</org_name>
+    <email>test@test.com</email>
+    <report_id>bad-pct-test</report_id>
+    <date_range><begin>1704067200</begin><end>1704153599</end></date_range>
+  </report_metadata>
+  <policy_published>
+    <domain>example.com</domain>
+    <p>none</p>
+    <pct>often</pct>
+  </policy_published>
+  <record>
+    <row>
+      <source_ip>1.1.1.1</source_ip>
+      <count>1</count>
+      <policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated>
+    </row>
+    <identifiers><header_from>example.com</header_from></identifiers>
+    <auth_results>
+      <dkim><domain>example.com</domain><result>pass</result></dkim>
+      <spf><domain>example.com</domain><result>pass</result></spf>
+    </auth_results>
+  </record>
+</feedback>
+'@
+            $result = ConvertFrom-DmarcXml -XmlContent $badPctXml -WarningAction SilentlyContinue
+            $record = if ($result -is [array]) { $result[0] } else { $result }
+            $record.PolicyPublished_pct | Should -Be 100
+        }
+
         It 'Should prohibit DTD processing (security check)' {
             $dtdXml = @'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -596,6 +677,82 @@ Describe 'DmarcHelpers Module' {
 
             $result = Expand-DmarcAttachments -Attachments @($attachment)
             $result.Xml.Count | Should -Be 0
+        }
+    }
+
+    Context 'Cumulative decompression limit' {
+        BeforeAll {
+            # Shrink the message-level budget so the cap can be exercised with small fixtures.
+            InModuleScope DmarcHelpers {
+                $script:SavedMaxTotalDecompressedBytes = $script:MaxTotalDecompressedBytes
+                $script:MaxTotalDecompressedBytes = 1024
+            }
+        }
+
+        AfterAll {
+            InModuleScope DmarcHelpers {
+                $script:MaxTotalDecompressedBytes = $script:SavedMaxTotalDecompressedBytes
+                Remove-Variable -Name SavedMaxTotalDecompressedBytes -Scope Script
+            }
+        }
+
+        It 'Should stop adding content once the total decompressed limit is exceeded' {
+            $xml = '<feedback>' + ('x' * 900) + '</feedback>'
+            $base64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($xml))
+
+            $attachments = @(
+                @{ '@odata.type' = '#microsoft.graph.fileAttachment'; 'name' = 'r1.xml'; 'contentBytes' = $base64 }
+                @{ '@odata.type' = '#microsoft.graph.fileAttachment'; 'name' = 'r2.xml'; 'contentBytes' = $base64 }
+            )
+
+            $result = Expand-DmarcAttachments -Attachments $attachments -WarningAction SilentlyContinue
+            # First attachment fits the 1024-byte budget; the second exceeds it.
+            $result.Xml.Count | Should -Be 1
+        }
+
+        It 'Should enforce the budget across entries within a single ZIP archive' {
+            $xml = '<feedback>' + ('x' * 600) + '</feedback>'
+            $xmlBytes = [System.Text.Encoding]::UTF8.GetBytes($xml)
+
+            $zipStream = [System.IO.MemoryStream]::new()
+            $archive = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+            foreach ($entryName in @('a.xml', 'b.xml', 'c.xml')) {
+                $entry = $archive.CreateEntry($entryName)
+                $entryStream = $entry.Open()
+                $entryStream.Write($xmlBytes, 0, $xmlBytes.Length)
+                $entryStream.Dispose()
+            }
+            $archive.Dispose()
+            $zipBytes = $zipStream.ToArray()
+            $zipStream.Dispose()
+
+            $attachment = @{
+                '@odata.type' = '#microsoft.graph.fileAttachment'
+                'name' = 'reports.zip'
+                'contentBytes' = [System.Convert]::ToBase64String($zipBytes)
+            }
+
+            $result = Expand-DmarcAttachments -Attachments @($attachment) -WarningAction SilentlyContinue
+            # Only the first 600-byte entry fits within the 1024-byte budget.
+            $result.Xml.Count | Should -Be 1
+        }
+    }
+
+    Context 'ConvertTo-SafeLogText' {
+        It 'Should strip control characters including CR/LF' {
+            $sanitized = ConvertTo-SafeLogText -Text "line1`r`nFAKE LOG ENTRY`tend"
+            $sanitized | Should -Not -Match '[\r\n\t]'
+            $sanitized | Should -BeLike '*line1*FAKE LOG ENTRY*end*'
+        }
+
+        It 'Should truncate long values' {
+            $sanitized = ConvertTo-SafeLogText -Text ('a' * 500) -MaxLength 100
+            $sanitized.Length | Should -BeLessOrEqual 103
+        }
+
+        It 'Should return an empty string for null or empty input' {
+            ConvertTo-SafeLogText -Text $null | Should -Be ''
+            ConvertTo-SafeLogText -Text '' | Should -Be ''
         }
     }
 
