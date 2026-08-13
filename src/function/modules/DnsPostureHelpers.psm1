@@ -210,7 +210,7 @@ function Get-SpfResult {
         })
 
         if (-not [string]::IsNullOrWhiteSpace($rawText)) {
-            $matches = [regex]::Matches($rawText, 'include:([A-Za-z0-9._-]+)|redirect=([A-Za-z0-9._-]+)|(?:\b(?:a|mx|ptr|exists)\b)', 'IgnoreCase')
+            $matches = [regex]::Matches($rawText, 'include:([A-Za-z0-9._-]+)|redirect=([A-Za-z0-9._-]+)', 'IgnoreCase')
             foreach ($match in $matches) {
                 $includeTarget = $match.Groups[1].Value
                 if ([string]::IsNullOrWhiteSpace($includeTarget)) { $includeTarget = $match.Groups[2].Value }

@@ -852,7 +852,7 @@ function ConvertFrom-DmarcXml {
                 BaseDomain                     = $policyDomainIdentity.BaseDomain
                 OrgDomain                      = $policyDomainIdentity.OrgDomain
                 IsSubdomain                    = $policyDomainIdentity.IsSubdomain
-                HeaderFrom                     = $identifiers.header_from
+                HeaderFrom                     = $headerFromDomain
                 HeaderFromBaseDomain           = $headerFromIdentity.BaseDomain
                 HeaderFromOrgDomain            = $headerFromIdentity.OrgDomain
                 HeaderFromIsSubdomain          = $headerFromIdentity.IsSubdomain
@@ -895,7 +895,7 @@ function ConvertFrom-DmarcXml {
                     (ConvertTo-DeterministicString -Value $reportId),
                     [string]$recordIdx,
                     (ConvertTo-DeterministicString -Value $row.source_ip),
-                    (ConvertTo-DomainName -DomainName $identifiers.header_from)
+                    (ConvertTo-DomainName -DomainName $headerFromDomain)
                 ) -join '|')
             $record['MessageHash'] = [System.BitConverter]::ToString($sha256.ComputeHash($hashInput)).Replace('-', '').ToLower()
 
