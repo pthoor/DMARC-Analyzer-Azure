@@ -46,7 +46,7 @@ Describe 'DnsPostureHelpers Module' {
             $env:DKIM_SELECTORS = 'Default; selector2, selector2'
 
             InModuleScope DnsPostureHelpers {
-                Mock Resolve-DnsName {
+                Mock Invoke-DnsTxtLookup {
                     [pscustomobject]@{ Strings = @('v=DKIM1; k=rsa; p=ABC123') }
                 } -ParameterFilter { $Name -eq 'default._domainkey.example.com' -or $Name -eq 'selector2._domainkey.example.com' }
 
@@ -61,7 +61,7 @@ Describe 'DnsPostureHelpers Module' {
     Context 'Test-ReportDmarcRelevant' {
         It 'returns true when the DMARC record includes a report URI' {
             InModuleScope DnsPostureHelpers {
-                Mock Resolve-DnsName {
+                Mock Invoke-DnsTxtLookup {
                     [pscustomobject]@{ Strings = @('v=DMARC1; p=none; rua=mailto:reports@example.com; ruf=mailto:forensics@example.com') }
                 } -ParameterFilter { $Name -eq '_dmarc.example.com' }
 
@@ -72,7 +72,7 @@ Describe 'DnsPostureHelpers Module' {
 
         It 'returns false when the DMARC record has no report target' {
             InModuleScope DnsPostureHelpers {
-                Mock Resolve-DnsName {
+                Mock Invoke-DnsTxtLookup {
                     [pscustomobject]@{ Strings = @('v=DMARC1; p=reject; adkim=s; aspf=s') }
                 } -ParameterFilter { $Name -eq '_dmarc.example.com' }
 
