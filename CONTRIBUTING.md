@@ -54,6 +54,7 @@ az bicep build --file infra/main.bicep
 - **Bicep** — All Bicep files must compile without errors (`az bicep build`).
 - **Error handling** — Use `try/catch` blocks for all external calls and resource access.
 - **No secrets** — Never commit credentials, passwords, API keys, or connection strings. Use Azure Key Vault references.
+- **Versioning (SemVer)** — Any user-impacting change must bump version metadata in the same PR. This includes changes to function behavior, parser/schema outputs, detections, workbook queries/UX, and deployment contracts. Internal-only changes (comments, formatting, refactors with no behavior change, and test-only edits) do not require a version bump.
 
 ## Code of Conduct
 
