@@ -537,6 +537,114 @@ function Read-StreamWithLimit {
 # DMARC XML Parsing
 # ─────────────────────────────────────────────
 
+function Normalize-DomainName {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$DomainName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DomainName)) {
+        return $null
+    }
+
+    $normalized = $DomainName.Trim().TrimEnd('.').TrimStart('.')
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return $null
+    }
+
+    return $normalized.ToLowerInvariant()
+}
+
+function Normalize-DeterministicString {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    return $Value.Trim().ToLowerInvariant()
+}
+
+function Get-DomainIdentity {
+    <#
+    .SYNOPSIS
+        Derives a stable registrable/org-domain identity from an email domain.
+    .DESCRIPTION
+        Uses a lightweight built-in suffix list as a minimal PSL-style fallback until the
+        project adds a versioned, auditable public-suffix snapshot. It is intentionally
+        deterministic and suitable for workbook joins and report-domain grouping.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$DomainName
+    )
+
+    $normalized = Normalize-DomainName -DomainName $DomainName
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return [ordered]@{
+            InputDomain = $DomainName
+            BaseDomain  = $null
+            OrgDomain   = $null
+            IsSubdomain = $false
+        }
+    }
+
+    if ($normalized -match '^\d+(\.\d+){3}$' -or $normalized -eq 'localhost') {
+        return [ordered]@{
+            InputDomain = $normalized
+            BaseDomain  = $normalized
+            OrgDomain   = $normalized
+            IsSubdomain = $false
+        }
+    }
+
+    $suffixes = @(
+        'co.uk', 'gov.uk', 'org.uk', 'ac.uk', 'com.au', 'net.au', 'co.jp', 'com.br', 'com.tr',
+        'io', 'ai', 'app', 'dev', 'cloud', 'shop', 'xyz', 'co', 'com', 'net', 'org', 'gov', 'edu',
+        'info', 'biz', 'us', 'uk', 'ca', 'au', 'de', 'fr', 'it', 'es', 'jp', 'br', 'nl', 'be', 'ch'
+    )
+
+    foreach ($suffix in ($suffixes | Sort-Object { $_.Length } -Descending)) {
+        if ($normalized -eq $suffix -or $normalized.EndsWith(".$suffix")) {
+            $suffixLabels = @($suffix.Split('.'))
+            $hostLabels = @($normalized.Split('.'))
+            $remainingLabels = @()
+
+            if ($hostLabels.Count -gt $suffixLabels.Count) {
+                $remainingLabels = @($hostLabels[0..($hostLabels.Count - $suffixLabels.Count - 1)])
+            }
+
+            if ($remainingLabels.Count -gt 0) {
+                $baseDomain = "{0}.{1}" -f $remainingLabels[-1], $suffix
+            }
+            else {
+                $baseDomain = $suffix
+            }
+
+            return [ordered]@{
+                InputDomain = $normalized
+                BaseDomain  = $baseDomain
+                OrgDomain   = $baseDomain
+                IsSubdomain = ($normalized -ne $baseDomain)
+            }
+        }
+    }
+
+    return [ordered]@{
+        InputDomain = $normalized
+        BaseDomain  = $normalized
+        OrgDomain   = $normalized
+        IsSubdomain = $false
+    }
+}
+
 function ConvertFrom-DmarcXml {
     <#
     .SYNOPSIS
@@ -628,13 +736,14 @@ function ConvertFrom-DmarcXml {
     $fo        = $policy.fo
 
     # Duplicate telemetry key scopes report identity by source organization and policy domain.
-    # Report IDs are not guaranteed to be globally unique across providers.
+    # Report IDs are not guaranteed to be globally unique across providers, so normalize case
+    # and trailing dot variants before hashing or deduping them.
     $duplicateTelemetryKey = '{0}|{1}|{2}|{3}|{4}' -f `
-        [string]$orgName,
-        [string]$reportId,
-        [string]$domain,
-        [string]$dateBegin,
-        [string]$dateEnd
+        (Normalize-DeterministicString -Value $orgName),
+        (Normalize-DeterministicString -Value $reportId),
+        (Normalize-DomainName -DomainName $domain),
+        (Normalize-DeterministicString -Value $dateBegin),
+        (Normalize-DeterministicString -Value $dateEnd)
 
     # ── Records ──
     $recordElements = $feedback.record
@@ -723,6 +832,10 @@ function ConvertFrom-DmarcXml {
                 $messageCount = 0
             }
 
+            $policyDomainIdentity = Get-DomainIdentity -DomainName $domain
+            $headerFromDomain = if ($identifiers.header_from) { $identifiers.header_from } else { $domain }
+            $headerFromIdentity = Get-DomainIdentity -DomainName $headerFromDomain
+
             # ── Build flat record ──
             $record = @{
                 TimeGenerated                  = [datetime]::UtcNow.ToString('o')
@@ -736,6 +849,13 @@ function ConvertFrom-DmarcXml {
                 ReportDateRangeBegin           = $dateBegin
                 ReportDateRangeEnd             = $dateEnd
                 Domain                         = $domain
+                BaseDomain                     = $policyDomainIdentity.BaseDomain
+                OrgDomain                      = $policyDomainIdentity.OrgDomain
+                IsSubdomain                    = $policyDomainIdentity.IsSubdomain
+                HeaderFrom                     = $identifiers.header_from
+                HeaderFromBaseDomain           = $headerFromIdentity.BaseDomain
+                HeaderFromOrgDomain            = $headerFromIdentity.OrgDomain
+                HeaderFromIsSubdomain          = $headerFromIdentity.IsSubdomain
                 PolicyPublished_p              = $policyP
                 PolicyPublished_sp             = $policySp
                 PolicyPublished_pct            = $policyPct
@@ -750,7 +870,6 @@ function ConvertFrom-DmarcXml {
                 PolicyEvaluated_reason_type    = $reasonType
                 PolicyEvaluated_reason_comment = $reasonComment
                 OverrideReasonCategory         = $overrideReasonCategory
-                HeaderFrom                     = $identifiers.header_from
                 EnvelopeFrom                   = $identifiers.envelope_from
                 EnvelopeTo                     = $identifiers.envelope_to
                 DkimResult                     = $primaryDkim
@@ -768,8 +887,16 @@ function ConvertFrom-DmarcXml {
             }
 
             # Deterministic hash for cross-run deduplication (SourceMessageId|ReportId|RecordIndex|SourceIP|HeaderFrom)
-            $hashInput       = [System.Text.Encoding]::UTF8.GetBytes(
-                "$SourceMessageId|$reportId|$recordIdx|$($row.source_ip)|$($identifiers.header_from)")
+            # Canonicalize values first so a report with equivalent casing or trailing-dot variants
+            # produces the same hash across repeated ingestions.
+            $hashInput = [System.Text.Encoding]::UTF8.GetBytes(
+                @(
+                    (Normalize-DeterministicString -Value $SourceMessageId),
+                    (Normalize-DeterministicString -Value $reportId),
+                    [string]$recordIdx,
+                    (Normalize-DeterministicString -Value $row.source_ip),
+                    (Normalize-DomainName -DomainName $identifiers.header_from)
+                ) -join '|')
             $record['MessageHash'] = [System.BitConverter]::ToString($sha256.ComputeHash($hashInput)).Replace('-', '').ToLower()
 
             $records.Add($record)
@@ -986,6 +1113,7 @@ Export-ModuleMember -Function @(
     'Set-MessageRead'
     'Get-MailboxMessages'
     'Expand-DmarcAttachments'
+    'Get-DomainIdentity'
     'ConvertFrom-DmarcXml'
     'ConvertTo-SafeLogText'
     'Send-DmarcRecordsToLogAnalytics'

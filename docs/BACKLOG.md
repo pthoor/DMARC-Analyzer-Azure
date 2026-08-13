@@ -40,6 +40,12 @@ Originally captured from a code/infra/workbook/ops audit on 2026-05-10. Use this
 - Live-DNS work is in scope only when it explains a DMARC authentication outcome (why SPF/DKIM/DMARC pass or fail). It is **not** in scope for transport-security or brand-display posture.
 - Recommended next slice is now: close stale P0/P1 correctness gaps (A10, A11), add suppressions (B3), add domain inventory (D9), then build the minimal posture collector (C0) that enables the DMARC-auth DNS checks (D2 SPF lookups, D3 DMARC record validity, D4 DKIM key strength).
 
+**Progress update — 2026-08-13**
+- ✅ The first correctness slice is implemented in code: canonical domain normalization and deterministic dedup/hash telemetry were added to the DMARC parser/helpers, and the relevant Pester coverage is green.
+- ✅ The repo now includes a minimal DNS posture helper and collector pattern for DMARC-auth checks (`DnsPostureHelpers.psm1` + `DomainPostureCollector/run.ps1`). This is a foundation, not the full production posture system.
+- ⏳ Remaining work is still the broader analyst-facing parity and hardening set: workbook pass-rate normalization (A10), admin HTTP security validation (A11), suppression handling (B3), and full production wiring of the posture collector and D2/D3/D4 checks.
+- The backlog remains the source of truth: the project is substantially more correct than before, but it is not yet “finished product-wide.”
+
 ---
 
 ## P0 — Correctness & security blockers
@@ -150,10 +156,11 @@ Originally captured from a code/infra/workbook/ops audit on 2026-05-10. Use this
 These items resolve live DNS **only to explain a DMARC authentication outcome** — why SPF/DKIM/DMARC pass or fail for in-scope domains. None of this data is in the report (RFC 7489 RUA carries only `policy_published` + per-record source IP/count/disposition/SPF-DKIM results/identifiers), and **workbook/KQL cannot resolve DNS** — hence the collector below. The actual checks live in D2 (SPF lookups), D3 (DMARC record validity), and D4 (DKIM key strength).
 
 ### C0. Minimal domain posture collector (foundational — enables D2/D3/D4)
-- **Effort:** M · **Status:** ☐ PICK before D2/D3/D4
+- **Effort:** M · **Status:** ☑ foundation implemented; production wiring and downstream D2/D3/D4 checks remain
 - **Problem:** D2/D3/D4 assume a "workbook tile that resolves `_dmarc`/SPF/selector TXT." **Workbook/KQL cannot perform DNS resolution**, and the repo has no DNS code today. Without a collector these checks are unbuildable.
 - **Fix:** Add a timer-triggered PowerShell Function (e.g. `DomainPostureCollector`) that, for each in-scope domain (from `DomainInventory_CL`, D9), runs `Resolve-DnsName` for the DMARC-authentication records only — `_dmarc.<domain>` TXT, the SPF record (recursively, to count lookups), and `<selector>._domainkey.<domain>` TXT for selectors seen in reports — and writes a `DomainPosture_CL` table (`Domain`, `CheckType`, `RecordRaw`, `ParsedFields`, `Status`, `CheckedAt`). Workbook tiles read this table only. Prefer a sibling module over expanding `DmarcHelpers.psm1`.
 - **Scope guard:** Keep this collector to DMARC-authentication records. It is deliberately **not** a transport-security/HTTPS prober (no MTA-STS `.well-known` fetch, no TLSA/DNSSEC) — see the out-of-scope decision below.
+- **Implementation status:** The helper module and collector skeleton are in place; the remaining work is connecting them to actual inventory + LAW ingestion so the posture data is operationally usable.
 
 ---
 

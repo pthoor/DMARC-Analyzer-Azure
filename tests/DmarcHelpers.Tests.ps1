@@ -32,6 +32,7 @@ Describe 'DmarcHelpers Module' {
             $exportedFunctions | Should -Contain 'Set-MessageRead'
             $exportedFunctions | Should -Contain 'Get-MailboxMessages'
             $exportedFunctions | Should -Contain 'Expand-DmarcAttachments'
+            $exportedFunctions | Should -Contain 'Get-DomainIdentity'
             $exportedFunctions | Should -Contain 'ConvertFrom-DmarcXml'
             $exportedFunctions | Should -Contain 'ConvertTo-SafeLogText'
             $exportedFunctions | Should -Contain 'Send-DmarcRecordsToLogAnalytics'
@@ -50,6 +51,29 @@ Describe 'DmarcHelpers Module' {
             $env:IDENTITY_ENDPOINT = 'https://test.endpoint'
             $env:IDENTITY_HEADER = $null
             { Get-ManagedIdentityToken -Resource 'https://graph.microsoft.com' } | Should -Throw '*IDENTITY_HEADER*'
+        }
+    }
+
+    Context 'Get-DomainIdentity' {
+        It 'Should normalize subdomains to registrable domains' {
+            $identity = Get-DomainIdentity -DomainName 'mail.example.com'
+            $identity.BaseDomain | Should -Be 'example.com'
+            $identity.OrgDomain | Should -Be 'example.com'
+            $identity.IsSubdomain | Should -Be $true
+        }
+
+        It 'Should support multi-part public suffixes like .co.uk' {
+            $identity = Get-DomainIdentity -DomainName 'mail.foo.example.co.uk'
+            $identity.BaseDomain | Should -Be 'example.co.uk'
+            $identity.OrgDomain | Should -Be 'example.co.uk'
+            $identity.IsSubdomain | Should -Be $true
+        }
+
+        It 'Should canonicalize domain casing and trailing dots before deriving identity' {
+            $identity = Get-DomainIdentity -DomainName ' MAIL.FOO.EXAMPLE.CO.UK. '
+            $identity.BaseDomain | Should -Be 'example.co.uk'
+            $identity.OrgDomain | Should -Be 'example.co.uk'
+            $identity.IsSubdomain | Should -Be $true
         }
     }
 
@@ -484,6 +508,74 @@ Describe 'DmarcHelpers Module' {
             $rec3 = if ($r3 -is [array]) { $r3[0] } else { $r3 }
             $record.MessageHash | Should -Not -Be $rec3.MessageHash
         }
+
+       It 'Should canonicalize domain and dedup fields before hashing' {
+           $hashXmlA = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<feedback>
+ <report_metadata>
+   <org_name> TEST.COM </org_name>
+   <email>test@test.com</email>
+   <report_id>Hash-Test</report_id>
+   <date_range><begin>1704067200</begin><end>1704153599</end></date_range>
+ </report_metadata>
+ <policy_published>
+   <domain>Example.Com.</domain>
+   <p>none</p>
+   <pct>100</pct>
+ </policy_published>
+ <record>
+   <row>
+     <source_ip> 1.1.1.1 </source_ip>
+     <count>1</count>
+     <policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated>
+   </row>
+   <identifiers><header_from> MAIL.EXAMPLE.COM. </header_from></identifiers>
+   <auth_results>
+     <dkim><domain>example.com</domain><result>pass</result></dkim>
+     <spf><domain>example.com</domain><result>pass</result></spf>
+   </auth_results>
+ </record>
+</feedback>
+'@
+           $hashXmlB = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<feedback>
+ <report_metadata>
+   <org_name>test.com</org_name>
+   <email>test@test.com</email>
+   <report_id>hash-test</report_id>
+   <date_range><begin>1704067200</begin><end>1704153599</end></date_range>
+ </report_metadata>
+ <policy_published>
+   <domain>example.com</domain>
+   <p>none</p>
+   <pct>100</pct>
+ </policy_published>
+ <record>
+   <row>
+     <source_ip>1.1.1.1</source_ip>
+     <count>1</count>
+     <policy_evaluated><disposition>none</disposition><dkim>pass</dkim><spf>pass</spf></policy_evaluated>
+   </row>
+   <identifiers><header_from>mail.example.com</header_from></identifiers>
+   <auth_results>
+     <dkim><domain>example.com</domain><result>pass</result></dkim>
+     <spf><domain>example.com</domain><result>pass</result></spf>
+   </auth_results>
+ </record>
+</feedback>
+'@
+
+           $rA = ConvertFrom-DmarcXml -XmlContent $hashXmlA -SourceMessageId ' Msg-A '
+           $rB = ConvertFrom-DmarcXml -XmlContent $hashXmlB -SourceMessageId 'msg-a'
+
+           $recordA = if ($rA -is [array]) { $rA[0] } else { $rA }
+           $recordB = if ($rB -is [array]) { $rB[0] } else { $rB }
+
+           $recordA.MessageHash | Should -Be $recordB.MessageHash
+           $recordA.DuplicateTelemetryKey | Should -Be $recordB.DuplicateTelemetryKey
+       }
 
         It 'Should tolerate a non-numeric <count> value instead of failing the report' {
             $badCountXml = @'
