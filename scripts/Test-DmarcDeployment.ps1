@@ -2,7 +2,7 @@
 
 <#!
 .SYNOPSIS
-  Validates a DMARC Analyzer Azure deployment end-to-end.
+  Validates a DMARC for Defender XDR deployment end-to-end.
 .DESCRIPTION
   Runs a practical readiness checklist:
   - Function App and required app settings exist

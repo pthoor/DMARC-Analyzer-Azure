@@ -1,4 +1,4 @@
-# DMARC Analyzer Azure Public Backlog
+# DMARC for Defender XDR Public Backlog
 
 Maintainer-facing planning for upcoming hardening, detection tuning, and product improvements. This file is safe to keep in the public repo because it explains direction and tradeoffs for contributors, but it should stay curated: move accepted work to GitHub issues when it is ready for implementation, and do not use this file for undisclosed security vulnerabilities.
 
@@ -39,6 +39,19 @@ Originally captured from a code/infra/workbook/ops audit on 2026-05-10. Use this
 - Keep the product centered on Exchange Online-hosted DMARC operations and Defender XDR/Sentinel-style analytics. Avoid turning it into a generic email-security platform.
 - Live-DNS work is in scope only when it explains a DMARC authentication outcome (why SPF/DKIM/DMARC pass or fail). It is **not** in scope for transport-security or brand-display posture.
 - Recommended next slice is now: close stale P0/P1 correctness gaps (A10, A11), add suppressions (B3), add domain inventory (D9), then build the minimal posture collector (C0) that enables the DMARC-auth DNS checks (D2 SPF lookups, D3 DMARC record validity, D4 DKIM key strength).
+
+**Progress update — 2026-08-13**
+- ✅ The first correctness slice is implemented in code: canonical domain normalization and deterministic dedup/hash telemetry were added to the DMARC parser/helpers, and the relevant Pester coverage is green.
+- ✅ The repo now includes a minimal DNS posture helper and collector pattern for DMARC-auth checks (`DnsPostureHelpers.psm1` + `DomainPostureCollector/run.ps1`). This is a foundation, not the full production posture system.
+- ⏳ Remaining work is still the broader analyst-facing parity and hardening set: workbook pass-rate normalization (A10), admin HTTP security validation (A11), suppression handling (B3), and full production wiring of the posture collector and D2/D3/D4 checks.
+- The backlog remains the source of truth: the project is substantially more correct than before, but it is not yet “finished product-wide.”
+
+**Correction — 2026-08-13 (same day, post-review)**
+- A review of the identity-normalization/posture-foundation slice above found the domain-identity fields (`BaseDomain`, `OrgDomain`, `IsSubdomain`, `HeaderFromBaseDomain`, `HeaderFromOrgDomain`, `HeaderFromIsSubdomain`) were computed by the parser but had **no destination column** — `infra/main.bicep`'s DCR stream declaration and the `DMARCReports_CL` table schema were never updated, so the DCR's `transformKql: 'source'` pass-through silently dropped them before they reached the table. **Fixed**: both schema blocks in `infra/main.bicep` now declare all six columns.
+- The same review found `Send-DomainPostureToLogAnalytics` read the same `DCR_ENDPOINT`/`DCR_IMMUTABLE_ID`/`DCR_STREAM_NAME` app settings as DMARC report ingestion — since no dedicated `DomainPosture_CL` DCR/table exists yet (see C0 below), setting `DOMAIN_POSTURE_SCOPE` to actually turn the collector on would have posted mismatched-schema rows at the DMARC report ingestion stream. **Fixed**: it now reads dedicated `POSTURE_DCR_ENDPOINT`/`POSTURE_DCR_IMMUTABLE_ID`/`POSTURE_DCR_STREAM_NAME` settings and throws if they're unset, instead of silently falling back to the DMARC ones.
+- `Invoke-DnsTxtLookup`'s Linux fallback (`nslookup`) returned `@()` — read downstream as `no_record`, indistinguishable from a real empty DNS answer — when `nslookup` isn't installed on the host. **Fixed**: it now throws instead, so a missing resolver binary fails the run loudly rather than quietly reporting false "no DMARC/SPF/DKIM record" posture data. **Still open**: whether `nslookup` (or `dnsutils`/`bind-tools`) is actually present in the target Azure Functions PowerShell 7.4 Linux runtime image has not been verified against a real deployment.
+- `MessageHash`/`DuplicateTelemetryKey` canonicalization and the new identity columns are both user-impacting parser/schema changes; `VERSION`, `CHANGELOG.md`, the four `detections/*.yaml` `version:` fields, and the workbook release string were bumped to `1.2.0` to close the gap against the SemVer rule this same slice added to `CONTRIBUTING.md`.
+- D9 status below updated to reflect that its `BaseDomain`/`IsSubdomain` schema-derivation half is now done; the `DomainInventory_CL` table itself (the other half of D9) is still open.
 
 ---
 
@@ -94,8 +107,9 @@ Originally captured from a code/infra/workbook/ops audit on 2026-05-10. Use this
 - **Optional follow-up (P2, new):** To gain a signal the fallback can't reproduce, recompute alignment from `auth_results` (DKIM `d=` / SPF `mfrom` domain) against the published `adkim`/`aspf` modes. This surfaces receiver **local-policy overrides** (`forwarded`, `mailing_list`, `trusted_forwarder`) where the message was delivered despite failing raw DMARC — the only case where a recomputed value diverges from `policy_evaluated`. Store as a separate column (e.g. `DmarcPassRecomputed`) rather than overwriting `DmarcPass`.
 
 ### A10. Normalize workbook and Azure Monitor alerts to `DmarcPassEffective`
-- **Effort:** M · **Status:** ☐
+- **Effort:** M · **Status:** ☑ workbook done; `infra/alerts.bicep` still open
 - **Where:** [workbook/dmarc-workbook.json](../workbook/dmarc-workbook.json), [infra/alerts.bicep](../infra/alerts.bicep)
+- **Implementation status (2026-08-13):** All 23 workbook tiles that computed a combined DMARC pass/fail signal now use the shared `DmarcPassEffective` pattern below, live-tested against a real workspace. As a side effect, "Fail" is now a clean `DmarcPassEffective == false` (matching Pass's negation) instead of the narrower `PolicyEvaluated_dkim =~ 'fail' and PolicyEvaluated_spf =~ 'fail'` used before — the old form under-counted rows where exactly one protocol was `'none'`/`'temperror'` rather than an explicit `'fail'`, so Pass + Fail didn't sum to Total; it does now. Tiles that legitimately need protocol-specific or different semantics (`spf-dkim-trend`, `failing-senders-remediation`'s broader "either protocol has an issue" net, `forwarding-detection`'s SPF-fail/DKIM-pass signature, `envelope-header-analysis`'s alignment pattern taxonomy, `alignment-failures`, `new-source-ips`) were deliberately left alone - forcing them onto `DmarcPassEffective` would have narrowed what they're for. `infra/alerts.bicep`'s pass-rate alert (line 92) and stale-reporter query (line 179) still use the raw inline form - not touched this pass.
 - **Problem:** Ingestion and detections now use `DmarcPass`, but many workbook tiles and the pass-rate alert still recompute pass/fail inline from `PolicyEvaluated_dkim` / `PolicyEvaluated_spf`. Because `DmarcPass` is derived from those same fields (see A9), the issue is **inconsistent/duplicated expressions across tiles**, not a true semantic divergence — but inconsistency still produces subtly different numbers when one tile forgets a null guard or weighting. README migration guidance already recommends `DmarcPassEffective` for historical fallback.
 - **Note on semantics:** The `DmarcPass`/`DmarcPassEffective` (receiver DMARC verdict) view and the raw `auth_results` SPF/DKIM tiles are **both valid and intentionally different** (overall DMARC outcome vs protocol-specific result). This item normalizes the *DMARC-verdict* tiles only; it must **not** collapse the raw-result tiles into it.
 - **Fix:** Introduce one shared KQL pattern in DMARC-verdict workbook tiles and alert queries:
@@ -150,10 +164,11 @@ Originally captured from a code/infra/workbook/ops audit on 2026-05-10. Use this
 These items resolve live DNS **only to explain a DMARC authentication outcome** — why SPF/DKIM/DMARC pass or fail for in-scope domains. None of this data is in the report (RFC 7489 RUA carries only `policy_published` + per-record source IP/count/disposition/SPF-DKIM results/identifiers), and **workbook/KQL cannot resolve DNS** — hence the collector below. The actual checks live in D2 (SPF lookups), D3 (DMARC record validity), and D4 (DKIM key strength).
 
 ### C0. Minimal domain posture collector (foundational — enables D2/D3/D4)
-- **Effort:** M · **Status:** ☐ PICK before D2/D3/D4
+- **Effort:** M · **Status:** ☑ foundation implemented; production wiring and downstream D2/D3/D4 checks remain
 - **Problem:** D2/D3/D4 assume a "workbook tile that resolves `_dmarc`/SPF/selector TXT." **Workbook/KQL cannot perform DNS resolution**, and the repo has no DNS code today. Without a collector these checks are unbuildable.
 - **Fix:** Add a timer-triggered PowerShell Function (e.g. `DomainPostureCollector`) that, for each in-scope domain (from `DomainInventory_CL`, D9), runs `Resolve-DnsName` for the DMARC-authentication records only — `_dmarc.<domain>` TXT, the SPF record (recursively, to count lookups), and `<selector>._domainkey.<domain>` TXT for selectors seen in reports — and writes a `DomainPosture_CL` table (`Domain`, `CheckType`, `RecordRaw`, `ParsedFields`, `Status`, `CheckedAt`). Workbook tiles read this table only. Prefer a sibling module over expanding `DmarcHelpers.psm1`.
 - **Scope guard:** Keep this collector to DMARC-authentication records. It is deliberately **not** a transport-security/HTTPS prober (no MTA-STS `.well-known` fetch, no TLSA/DNSSEC) — see the out-of-scope decision below.
+- **Implementation status:** The helper module and collector skeleton are in place. `DomainPostureCollector` reads `POSTURE_DCR_ENDPOINT`/`POSTURE_DCR_IMMUTABLE_ID`/`POSTURE_DCR_STREAM_NAME` (deliberately separate from the DMARC report ingestion `DCR_*` settings) and throws if they're unset, so it fails closed instead of misfiring into the wrong stream. **Still open before this is usable in any environment:** (1) `infra/main.bicep` has no `DomainPosture_CL` table or dedicated DCR/DCE yet — the `POSTURE_DCR_*` settings have nothing to point at; (2) it has no scheduled input from `DomainInventory_CL` (D9) — `DOMAIN_POSTURE_SCOPE`/`DMARC_DOMAIN_SCOPE`/`DOMAIN_SCOPE` must be set manually; (3) `nslookup` availability on the deployed Linux Function App image is unverified — the resolver now fails loudly if it's missing (see progress note above) rather than reporting false data, but the underlying gap isn't closed.
 
 ---
 
@@ -214,9 +229,10 @@ These items resolve live DNS **only to explain a DMARC authentication outcome** 
 - **Fix:** Externalize to a `ProviderIPs_CL` Log Analytics table seeded from community-maintained mappings (e.g., publicly-published ESP IP ranges, known forwarder ASN lists) plus our own additions. Schema: `(IPPrefix, ASN, OrgName, Category, Confidence, Source, LastUpdated)`. Workbook + detections join against it. Doubles as Z1b prep — promote out of Z1b since it's valuable standalone.
 
 ### D9. Domain inventory + subdomain auto-discovery (`DomainInventory_CL`)
-- **Effort:** S · **Status:** ☐
+- **Effort:** S · **Status:** ☑ schema-derivation half done; lookup table still open
 - **Problem:** We group by `Domain` from incoming reports but don't track "domains expected in scope" vs "domains actually seen." Subdomain spoofing (e.g., `newsletter.corp.example.com` when only `corp.example.com` is monitored) goes unnoticed, and unexpected new domains in reports aren't surfaced.
 - **Fix:** Add a `DomainInventory_CL` lookup table populated at deploy time (or via a small admin endpoint) with `(BaseDomain, OwnerTeam, ExpectedSubdomains, AddedAt)`. Workbook tile: "Unexpected domains in reports last 30d." Also derive `BaseDomain` and `IsSubdomain` columns at ingestion (overlaps with Z1b prep — same change).
+- **Implementation status (2026-08-13):** `BaseDomain`/`OrgDomain`/`IsSubdomain` (and the `HeaderFrom` equivalents) are now derived at ingestion via `Get-DomainIdentity` and land in `DMARCReports_CL` (see `infra/main.bicep`). The `DomainInventory_CL` lookup table, the "expected vs. seen" comparison, and the "unexpected domains" workbook tile are still open — the column derivation alone doesn't surface unexpected domains.
 
 ### D10. Stakeholder email digest (scheduled push)
 - **Effort:** S · **Status:** ☐
@@ -320,6 +336,12 @@ These items resolve live DNS **only to explain a DMARC authentication outcome** 
 - **Problem:** `2020-02-02` is archived. **This is hygiene, not a correctness/security blocker** — the archived version still deploys and functions, so it was demoted from P0 to P2.
 - **Fix:** Move to `2020-11-01-preview` (or current GA).
 
+### G7. CI/CD-friendly code deployment (`scmAccessMode`)
+- **Effort:** S · **Status:** ☑ (`scmAccessMode` param added: `restricted` default / `identity-gated`; basic publish credentials disabled unconditionally)
+- **Where:** [infra/main.bicep](../infra/main.bicep), [docs/DEPLOYING_CODE_UPDATES.md](DEPLOYING_CODE_UPDATES.md)
+- **Problem:** Flex Consumption's One Deploy always needs some SCM (Kudu) reachability to push code, and the project's original hardened default (`restrictScmAccess=true`) closes that to the public internet — which is right for a single operator, but doesn't compose with plain GitHub-hosted Actions runners for consumers who fork this project and want CI/CD, since their IP ranges are too large/volatile to allow-list.
+- **Fix:** Replaced the bool with `scmAccessMode` (`restricted` / `identity-gated`). `identity-gated` opens SCM to the network but disables classic basic-auth publish credentials unconditionally, so a valid Entra ID token (OIDC + `Website Contributor`) is the only way to deploy either way. Documented three flavors — manual with a temporary scoped IP rule, GitHub-hosted via `identity-gated`, self-hosted/VNet-integrated via `restricted` — in `docs/DEPLOYING_CODE_UPDATES.md`.
+
 ---
 
 ## P2 — Open-source readiness
@@ -357,7 +379,7 @@ These items resolve live DNS **only to explain a DMARC authentication outcome** 
 ### Z1b. Advanced Hunting graph functions + Sentinel data lake (still deferred)
 - **Status:** ⏸ Deferred — newer/limited capabilities distinct from Z1a.
 - **Reference:** https://learn.microsoft.com/defender-xdr/advanced-hunting-graph
-- **Prep work:** most schema-shape prep is tracked as standalone P1 items — D1 (`ASN`, `IPReputation`), D8 (`ProviderIPs_CL`), D9 (`BaseDomain`, `IsSubdomain`), B4 (`OverrideReasonCategory`). Remaining graph-specific work: edge metadata (`FirstSeen`/`LastSeen` per IP×Domain pair) and graph-function rewrites of the KQL. Note: after onboarding to the Sentinel **data lake**, auxiliary log tables move to data-lake KQL exploration rather than standard Advanced Hunting.
+- **Prep work:** most schema-shape prep is tracked as standalone P1 items — D1 (`ASN`, `IPReputation`), D8 (`ProviderIPs_CL`), D9 (`BaseDomain`, `IsSubdomain` — done at ingestion, `DomainInventory_CL` lookup table still open), B4 (`OverrideReasonCategory`). Remaining graph-specific work: edge metadata (`FirstSeen`/`LastSeen` per IP×Domain pair) and graph-function rewrites of the KQL. Note: after onboarding to the Sentinel **data lake**, auxiliary log tables move to data-lake KQL exploration rather than standard Advanced Hunting.
 
 ### Z2. Private Endpoints
 - **Status:** ⏸ Tracked in separate GitHub issue.

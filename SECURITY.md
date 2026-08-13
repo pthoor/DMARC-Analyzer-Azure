@@ -11,10 +11,11 @@
 If you discover a security vulnerability in this project, please report it responsibly:
 
 1. **Do NOT open a public GitHub issue** for security vulnerabilities.
-2. Use [GitHub Private Vulnerability Reporting](https://github.com/pthoor/DMARC-Analyzer-Azure/security/advisories/new) to report the issue privately.
+2. Use [GitHub Private Vulnerability Reporting](https://github.com/pthoor/DMARC-for-Defender-XDR/security/advisories/new) to report the issue privately.
 3. Provide as much detail as possible, including steps to reproduce and potential impact.
 
 You can expect:
+
 - **Acknowledgment within 48 hours**
 - **A plan for a fix within 7 days**
 - Credit in the release notes (unless you prefer to remain anonymous)

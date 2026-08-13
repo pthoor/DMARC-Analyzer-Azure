@@ -69,13 +69,18 @@ Set to true only when using the Azure Functions Core Tools CLI (func azure funct
 ''')
 param allowStorageSharedKeyAccess bool = false
 
-@description('''Block external access to the SCM (Kudu) management endpoint.
+@description('''Controls how the SCM (Kudu) deployment endpoint is secured. Flex Consumption's "One Deploy" mechanism (used by `az functionapp deploy`, Core Tools, VS Code publish, and the Azure/functions-action GitHub Action) transiently spins up Kudu for every deployment, so *some* SCM reachability is required whenever code is pushed - this parameter controls whether that's gated by network or by identity. Application logs are available through Application Insights either way, so neither mode is needed for day-to-day operations, only for pushing new code.
 
-When true (default): all access to https://{app}.scm.azurewebsites.net is denied. This is the recommended setting for production. Flex Consumption deployments use blob storage and do not need Kudu. Application logs are available through Application Insights.
+- "restricted" (default): SCM is closed to the public internet (network-level Deny on https://{app}.scm.azurewebsites.net). Use for manual/occasional deploys via a temporary, scoped IP allow-rule (`az webapp config access-restriction add --scm-site`, removed again afterward), or for CI runners that reach SCM over private networking (VNet-integrated GitHub-hosted runners, self-hosted runners inside the VNet). This is the most restrictive option and matches the project's original hardened posture.
+- "identity-gated": SCM is network-reachable, but classic username/password (basic auth) publishing credentials are disabled unconditionally regardless of this setting (see basicPublishingCredentialsPolicies below) - so the only way to actually deploy is a valid Microsoft Entra ID token from an authorized identity (e.g. an OIDC federated credential + "Website Contributor" role scoped to this Function App). Recommended for plain GitHub-hosted Actions runners, whose IP ranges are too large and volatile to allow-list practically.
 
-When false: the SCM endpoint is publicly reachable. Use only in non-production environments for debugging.
+Regardless of mode, basic auth (SCM and FTP publish credentials) is always disabled below - "restricted" vs "identity-gated" only changes whether the *network path* to SCM is open, never whether a password alone could authenticate a deploy.
 ''')
-param restrictScmAccess bool = true
+@allowed([
+  'restricted'
+  'identity-gated'
+])
+param scmAccessMode string = 'restricted'
 
 @description('''Client ID of the Entra ID app registration whose bearers may call the admin HTTP functions (BackfillProcessor, SetupHelper). When set, Easy Auth is enabled on the Function App and callers must present a valid Entra ID bearer token.
 
@@ -153,6 +158,9 @@ resource customTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01
         { name: 'ReportDateRangeBegin', type: 'dateTime' }
         { name: 'ReportDateRangeEnd', type: 'dateTime' }
         { name: 'Domain', type: 'string' }
+        { name: 'BaseDomain', type: 'string' }
+        { name: 'OrgDomain', type: 'string' }
+        { name: 'IsSubdomain', type: 'boolean' }
         { name: 'PolicyPublished_p', type: 'string' }
         { name: 'PolicyPublished_sp', type: 'string' }
         { name: 'PolicyPublished_pct', type: 'int' }
@@ -168,6 +176,9 @@ resource customTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01
         { name: 'PolicyEvaluated_reason_comment', type: 'string' }
         { name: 'OverrideReasonCategory', type: 'string' }
         { name: 'HeaderFrom', type: 'string' }
+        { name: 'HeaderFromBaseDomain', type: 'string' }
+        { name: 'HeaderFromOrgDomain', type: 'string' }
+        { name: 'HeaderFromIsSubdomain', type: 'boolean' }
         { name: 'EnvelopeFrom', type: 'string' }
         { name: 'EnvelopeTo', type: 'string' }
         { name: 'DkimResult', type: 'string' }
@@ -224,6 +235,9 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
           { name: 'ReportDateRangeBegin', type: 'datetime' }
           { name: 'ReportDateRangeEnd', type: 'datetime' }
           { name: 'Domain', type: 'string' }
+          { name: 'BaseDomain', type: 'string' }
+          { name: 'OrgDomain', type: 'string' }
+          { name: 'IsSubdomain', type: 'boolean' }
           { name: 'PolicyPublished_p', type: 'string' }
           { name: 'PolicyPublished_sp', type: 'string' }
           { name: 'PolicyPublished_pct', type: 'int' }
@@ -239,6 +253,9 @@ resource dcr 'Microsoft.Insights/dataCollectionRules@2023-03-11' = {
           { name: 'PolicyEvaluated_reason_comment', type: 'string' }
           { name: 'OverrideReasonCategory', type: 'string' }
           { name: 'HeaderFrom', type: 'string' }
+          { name: 'HeaderFromBaseDomain', type: 'string' }
+          { name: 'HeaderFromOrgDomain', type: 'string' }
+          { name: 'HeaderFromIsSubdomain', type: 'boolean' }
           { name: 'EnvelopeFrom', type: 'string' }
           { name: 'EnvelopeTo', type: 'string' }
           { name: 'DkimResult', type: 'string' }
@@ -387,10 +404,11 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     siteConfig: {
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
-      // Block the SCM (Kudu) management endpoint in production.
-      // Flex Consumption deployments use blob storage — Kudu is not required.
-      // Set restrictScmAccess=false only for non-production debugging.
-      scmIpSecurityRestrictionsDefaultAction: restrictScmAccess ? 'Deny' : 'Allow'
+      // See the scmAccessMode parameter description for the full security model.
+      // Kudu (SCM) is spun up transiently by Flex Consumption's One Deploy for every
+      // code deployment, so this only gates the network path to it - basic auth is
+      // disabled unconditionally below regardless of this setting.
+      scmIpSecurityRestrictionsDefaultAction: scmAccessMode == 'restricted' ? 'Deny' : 'Allow'
     }
     functionAppConfig: {
       deployment: {
@@ -424,6 +442,25 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       DCR_STREAM_NAME: streamName
       GRAPH_CLIENT_STATE: '@Microsoft.KeyVault(SecretUri=${graphClientStateSecret.properties.secretUri})'
       // GRAPH_SUBSCRIPTION_ID is set after running New-GraphSubscription.ps1
+    }
+  }
+
+  // Disabled unconditionally, independent of scmAccessMode: classic username/password
+  // publish credentials are never the deployment auth mechanism this project supports,
+  // whether SCM is network-restricted or not. This is what makes "identity-gated" mode
+  // safe to open to the public internet - a leaked/guessed password can't authenticate
+  // a deploy either way, only a valid Entra ID token for an authorized identity can.
+  resource scmBasicAuthPolicy 'basicPublishingCredentialsPolicies' = {
+    name: 'scm'
+    properties: {
+      allow: false
+    }
+  }
+
+  resource ftpBasicAuthPolicy 'basicPublishingCredentialsPolicies' = {
+    name: 'ftp'
+    properties: {
+      allow: false
     }
   }
 }

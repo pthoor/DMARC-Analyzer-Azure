@@ -1,10 +1,10 @@
-# Contributing to DMARC Analyzer for Azure
+# Contributing to DMARC for Defender XDR
 
 Thank you for your interest in contributing! 🎉
 
 ## How to Report Bugs
 
-1. Check [existing issues](https://github.com/pthoor/DMARC-Analyzer-Azure/issues) first to avoid duplicates.
+1. Check [existing issues](https://github.com/pthoor/DMARC-for-Defender-XDR/issues) first to avoid duplicates.
 2. Open a new issue using the **🐛 Bug Report** template.
 3. Include clear reproduction steps, expected vs. actual behavior, and relevant logs.
 
@@ -48,12 +48,25 @@ Invoke-ScriptAnalyzer -Path ./scripts -Recurse -Severity Warning,Error
 az bicep build --file infra/main.bicep
 ```
 
+### Detection rule validation
+`tests/DetectionRules.Tests.ps1` (part of `Invoke-Pester` above) statically validates
+`detections/*.yaml` against the Sentinel analytics rule schema - no Azure access
+needed, runs on every PR. A separate, maintainer-only CI workflow additionally
+validates detection rules against a real Sentinel workspace; see
+[docs/CI_LIVE_VALIDATION.md](docs/CI_LIVE_VALIDATION.md) if you're setting that up.
+
+### Deploying code changes
+If you're testing infra/code changes against a real deployment, see
+[docs/DEPLOYING_CODE_UPDATES.md](docs/DEPLOYING_CODE_UPDATES.md) for the
+`scmAccessMode` options and which one fits manual deploys vs. CI/CD.
+
 ## Code Standards
 
 - **PSScriptAnalyzer** — All PowerShell code must pass with no warnings or errors at `Warning` severity and above.
 - **Bicep** — All Bicep files must compile without errors (`az bicep build`).
 - **Error handling** — Use `try/catch` blocks for all external calls and resource access.
 - **No secrets** — Never commit credentials, passwords, API keys, or connection strings. Use Azure Key Vault references.
+- **Versioning (SemVer)** — Any user-impacting change must bump version metadata in the same PR. This includes changes to function behavior, parser/schema outputs, detections, workbook queries/UX, and deployment contracts. Internal-only changes (comments, formatting, refactors with no behavior change, and test-only edits) do not require a version bump.
 
 ## Code of Conduct
 

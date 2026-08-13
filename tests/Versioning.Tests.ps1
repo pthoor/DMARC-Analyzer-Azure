@@ -31,8 +31,8 @@ Describe 'Versioning and query safety metadata' {
         }
 
         It 'Workbook header should include GitHub release links and update-check guidance' {
-            $workbookContent | Should -Match 'https://github\.com/pthoor/DMARC-Analyzer-Azure'
-            $workbookContent | Should -Match 'https://github\.com/pthoor/DMARC-Analyzer-Azure/releases/latest'
+            $workbookContent | Should -Match 'https://github\.com/pthoor/DMARC-for-Defender-XDR'
+            $workbookContent | Should -Match 'https://github\.com/pthoor/DMARC-for-Defender-XDR/releases/latest'
             $workbookContent | Should -Match 'Update check'
         }
     }

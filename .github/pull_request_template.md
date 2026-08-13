@@ -18,6 +18,7 @@ Closes #
 - [ ] PSScriptAnalyzer reports no warnings or errors
 - [ ] Bicep compiles without errors (`az bicep build`)
 - [ ] Documentation has been updated (if applicable)
+- [ ] I updated SemVer/version metadata for this change, or documented why no bump is required
 - [ ] No secrets or credentials have been committed
 
 ## Testing

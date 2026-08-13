@@ -19,7 +19,7 @@ Sentinel-compatible YAML detection rules for DMARC anomaly detection. These foll
 ## Prerequisites
 
 - Microsoft Sentinel workspace connected to Defender XDR portal
-- `DMARCReports_CL` custom table with DMARC report data ingested by the DMARC Analyzer pipeline
+- `DMARCReports_CL` custom table with DMARC report data ingested by the DMARC for Defender XDR pipeline
 
 ## Deployment
 

@@ -1,6 +1,9 @@
 # Azure Functions
 local.settings.json
 
+# graphify skill
+graphify-out/
+
 # Environment / secrets
 .env
 .env.*

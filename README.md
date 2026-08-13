@@ -191,6 +191,13 @@ func azure functionapp publish <function-app-name> --powershell
 
 The function app name is shown in the Bicep deployment output as `functionAppName`.
 
+> **Deploy fails with a 403 or a 415?** A 403 means SCM is closed to the public
+> internet (the `scmAccessMode=restricted` default) - see
+> [docs/DEPLOYING_CODE_UPDATES.md](docs/DEPLOYING_CODE_UPDATES.md) for a temporary
+> scoped IP allow-rule (manual deploys) or the `identity-gated` mode (CI/CD, e.g.
+> GitHub-hosted Actions runners). A 415 means the deploy *tool* is the problem, not
+> access - the same doc has the verified working command to use instead.
+
 ### 3. Grant Exchange RBAC Permissions
 
 Grant the Function's Managed Identity permissions to access the shared mailbox. **This must be done before creating the Graph subscription.**
@@ -515,6 +522,10 @@ func azure functionapp publish $funcName --powershell
 cd src/function
 func azure functionapp publish "$FUNC_NAME" --powershell
 ```
+
+Same SCM-access note as the initial deploy above applies here - see
+[docs/DEPLOYING_CODE_UPDATES.md](docs/DEPLOYING_CODE_UPDATES.md) if this fails with a
+403 or 415, or if you're wiring this into CI/CD.
 
 **That's it.** You do not need to re-run Exchange RBAC or Graph subscription setup — those are already in place. The Graph subscription ID is restored in Step 3b above.
 

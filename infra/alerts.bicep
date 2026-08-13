@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────────────────────
-// DMARC Analyzer — Azure Monitor Scheduled Query Alert Rules
+// DMARC for Defender XDR — Azure Monitor Scheduled Query Alert Rules
 // Monitors the DMARCReports_CL table for anomalies and failures.
 // ──────────────────────────────────────────────────────────────
 

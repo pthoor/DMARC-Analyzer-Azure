@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document summarizes what DMARC Analyzer Azure stores, retention defaults, and privacy controls.
+This document summarizes what DMARC for Defender XDR stores, retention defaults, and privacy controls.
 
 ## Data collected
 
