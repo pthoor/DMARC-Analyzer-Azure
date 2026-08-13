@@ -1,4 +1,4 @@
-# DMARC Analyzer Azure Runbook
+# DMARC for Defender XDR Runbook
 
 ## Scope
 

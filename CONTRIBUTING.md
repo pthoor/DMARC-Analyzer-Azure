@@ -1,10 +1,10 @@
-# Contributing to DMARC Analyzer for Azure
+# Contributing to DMARC for Defender XDR
 
 Thank you for your interest in contributing! 🎉
 
 ## How to Report Bugs
 
-1. Check [existing issues](https://github.com/pthoor/DMARC-Analyzer-Azure/issues) first to avoid duplicates.
+1. Check [existing issues](https://github.com/pthoor/DMARC-for-Defender-XDR/issues) first to avoid duplicates.
 2. Open a new issue using the **🐛 Bug Report** template.
 3. Include clear reproduction steps, expected vs. actual behavior, and relevant logs.
 
@@ -47,6 +47,18 @@ Invoke-ScriptAnalyzer -Path ./scripts -Recurse -Severity Warning,Error
 ```bash
 az bicep build --file infra/main.bicep
 ```
+
+### Detection rule validation
+`tests/DetectionRules.Tests.ps1` (part of `Invoke-Pester` above) statically validates
+`detections/*.yaml` against the Sentinel analytics rule schema - no Azure access
+needed, runs on every PR. A separate, maintainer-only CI workflow additionally
+validates detection rules against a real Sentinel workspace; see
+[docs/CI_LIVE_VALIDATION.md](docs/CI_LIVE_VALIDATION.md) if you're setting that up.
+
+### Deploying code changes
+If you're testing infra/code changes against a real deployment, see
+[docs/DEPLOYING_CODE_UPDATES.md](docs/DEPLOYING_CODE_UPDATES.md) for the
+`scmAccessMode` options and which one fits manual deploys vs. CI/CD.
 
 ## Code Standards
 

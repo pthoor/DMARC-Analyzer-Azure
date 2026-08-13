@@ -537,7 +537,7 @@ function Read-StreamWithLimit {
 # DMARC XML Parsing
 # ─────────────────────────────────────────────
 
-function Normalize-DomainName {
+function ConvertTo-DomainName {
     [CmdletBinding()]
     param(
         [AllowEmptyString()]
@@ -556,7 +556,7 @@ function Normalize-DomainName {
     return $normalized.ToLowerInvariant()
 }
 
-function Normalize-DeterministicString {
+function ConvertTo-DeterministicString {
     [CmdletBinding()]
     param(
         [AllowEmptyString()]
@@ -586,7 +586,7 @@ function Get-DomainIdentity {
         [string]$DomainName
     )
 
-    $normalized = Normalize-DomainName -DomainName $DomainName
+    $normalized = ConvertTo-DomainName -DomainName $DomainName
     if ([string]::IsNullOrWhiteSpace($normalized)) {
         return [ordered]@{
             InputDomain = $DomainName
@@ -739,11 +739,11 @@ function ConvertFrom-DmarcXml {
     # Report IDs are not guaranteed to be globally unique across providers, so normalize case
     # and trailing dot variants before hashing or deduping them.
     $duplicateTelemetryKey = '{0}|{1}|{2}|{3}|{4}' -f `
-        (Normalize-DeterministicString -Value $orgName),
-        (Normalize-DeterministicString -Value $reportId),
-        (Normalize-DomainName -DomainName $domain),
-        (Normalize-DeterministicString -Value $dateBegin),
-        (Normalize-DeterministicString -Value $dateEnd)
+        (ConvertTo-DeterministicString -Value $orgName),
+        (ConvertTo-DeterministicString -Value $reportId),
+        (ConvertTo-DomainName -DomainName $domain),
+        (ConvertTo-DeterministicString -Value $dateBegin),
+        (ConvertTo-DeterministicString -Value $dateEnd)
 
     # ── Records ──
     $recordElements = $feedback.record
@@ -891,11 +891,11 @@ function ConvertFrom-DmarcXml {
             # produces the same hash across repeated ingestions.
             $hashInput = [System.Text.Encoding]::UTF8.GetBytes(
                 @(
-                    (Normalize-DeterministicString -Value $SourceMessageId),
-                    (Normalize-DeterministicString -Value $reportId),
+                    (ConvertTo-DeterministicString -Value $SourceMessageId),
+                    (ConvertTo-DeterministicString -Value $reportId),
                     [string]$recordIdx,
-                    (Normalize-DeterministicString -Value $row.source_ip),
-                    (Normalize-DomainName -DomainName $identifiers.header_from)
+                    (ConvertTo-DeterministicString -Value $row.source_ip),
+                    (ConvertTo-DomainName -DomainName $identifiers.header_from)
                 ) -join '|')
             $record['MessageHash'] = [System.BitConverter]::ToString($sha256.ComputeHash($hashInput)).Replace('-', '').ToLower()
 
@@ -1108,6 +1108,7 @@ function Invoke-DmarcReportProcessing {
 # Export all public functions
 Export-ModuleMember -Function @(
     'Get-ManagedIdentityToken'
+    'Invoke-WithRetry'
     'Invoke-GraphRequest'
     'Get-MailMessage'
     'Set-MessageRead'

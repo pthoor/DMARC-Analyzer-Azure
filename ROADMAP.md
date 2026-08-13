@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap tracks the high-level direction of DMARC Analyzer Azure.
+This roadmap tracks the high-level direction of DMARC for Defender XDR.
 
 ## Near term
 

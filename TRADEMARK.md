@@ -1,6 +1,6 @@
 # Trademark and Branding Guidance
 
-DMARC Analyzer Azure is an open-source project name used in this repository.
+DMARC for Defender XDR is an open-source project name used in this repository.
 
 ## Allowed uses
 
@@ -16,6 +16,7 @@ DMARC Analyzer Azure is an open-source project name used in this repository.
 ## Fork guidance
 
 If you publish a fork:
+
 - Clearly identify it as a fork.
 - Use distinct release naming for your distributions.
 - Do not present forked binaries as official project releases.

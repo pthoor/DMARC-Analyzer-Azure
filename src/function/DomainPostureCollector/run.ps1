@@ -30,7 +30,7 @@ try {
             $rows.Add($dkimRow)
         }
 
-        if (Test-ReportDmarcRelevant -Domain $domain) {
+        if (Test-ReportDmarcRelevant -DmarcRecordRaw $dmarcRow.RecordRaw) {
             $reportDmarcRow = Get-RecordResult -Domain $domain -RecordName "_report._dmarc.$domain" -CheckType 'report_dmarc'
             $rows.Add($reportDmarcRow)
         }

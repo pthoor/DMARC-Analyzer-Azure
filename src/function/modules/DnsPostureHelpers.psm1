@@ -33,6 +33,40 @@ function Get-DomainPostureScope {
     return $domains.ToArray()
 }
 
+function Get-NslookupTxtRecords {
+    <#
+    .SYNOPSIS
+        Parses `nslookup -type=txt` text output into TXT record objects shaped like
+        Resolve-DnsName's output (an array of objects exposing a Strings array).
+    .DESCRIPTION
+        A single TXT record can be split across multiple quoted character-strings on one
+        "text = ..." line (e.g. long DKIM keys/SPF records exceeding 255 bytes). Every quoted
+        segment on a line is grouped into that line's own Strings array so the chunks of ONE
+        record stay together (and get concatenated downstream, not "; "-joined as if they were
+        separate records). A separate line is treated as a separate record.
+        Kept as its own function so it can be unit tested without invoking a real nslookup binary.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [string[]]$RawOutput
+    )
+
+    $entries = @()
+    foreach ($line in @($RawOutput)) {
+        if ($null -eq $line -or $line -notmatch 'text\s*=') { continue }
+
+        $quotedSegments = [regex]::Matches($line, '"([^"]*)"')
+        if ($quotedSegments.Count -eq 0) { continue }
+
+        $entries += [pscustomobject]@{
+            Strings = @($quotedSegments | ForEach-Object { $_.Groups[1].Value })
+        }
+    }
+
+    return $entries
+}
+
 function Invoke-DnsTxtLookup {
     [CmdletBinding()]
     param(
@@ -46,7 +80,12 @@ function Invoke-DnsTxtLookup {
 
     $nslookup = Get-Command nslookup -ErrorAction SilentlyContinue
     if ($null -eq $nslookup) {
-        return @()
+        # Neither resolver is available on this host. Returning @() here would be
+        # indistinguishable downstream from a genuine "no DNS record" result, so
+        # every check would silently report false negatives (e.g. "domain has no
+        # DMARC record") instead of surfacing the real problem: this host can't
+        # resolve DNS at all. Fail loudly instead.
+        throw "No DNS TXT resolver is available on this host: neither 'Resolve-DnsName' (Windows) nor 'nslookup' was found. Install a DNS lookup tool (e.g. the 'dnsutils'/'bind-tools' package) in the Function App's Linux runtime before enabling DomainPostureCollector."
     }
 
     $rawOutput = & $nslookup.Source -type=txt $Name 2>$null
@@ -54,20 +93,7 @@ function Invoke-DnsTxtLookup {
         return @()
     }
 
-    $entries = @()
-    foreach ($line in @($rawOutput)) {
-        if ($line -match 'text\s*=\s*"(.*)"') {
-            $entries += $Matches[1]
-        }
-    }
-
-    if ($entries.Count -eq 0) {
-        return @()
-    }
-
-    return $entries | ForEach-Object {
-        [pscustomobject]@{ Strings = @($_) }
-    }
+    return Get-NslookupTxtRecords -RawOutput @($rawOutput)
 }
 
 function Get-RecordResult {
@@ -249,30 +275,33 @@ function Get-DkimSelectorsForDomain {
 }
 
 function Test-ReportDmarcRelevant {
+    <#
+    .SYNOPSIS
+        Determines whether a domain's DMARC record authorizes external reporting (rua/ruf).
+    .DESCRIPTION
+        Takes the already-resolved `_dmarc.<domain>` TXT text (e.g. from Get-RecordResult's
+        RecordRaw) rather than re-resolving DNS itself - the caller has typically already
+        fetched this exact record for the 'dmarc' CheckType row, and issuing a second,
+        independent DNS query here would double DNS I/O per domain and risk the two lookups
+        disagreeing under transient DNS flakiness.
+    #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]
-        [string]$Domain
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$DmarcRecordRaw
     )
 
-    $recordName = "_dmarc.$Domain"
-    $records = Invoke-DnsTxtLookup -Name $recordName
-    foreach ($record in @($records)) {
-        $entries = @()
-        foreach ($item in @($record.Strings)) {
-            if ($item) { $entries += $item }
-        }
-        if ($entries.Count -eq 0 -and $record -is [string]) {
-            $entries = @($record)
-        }
+    if ([string]::IsNullOrWhiteSpace($DmarcRecordRaw)) {
+        return $false
+    }
 
-        foreach ($entry in $entries) {
-            $normalized = $entry.Trim()
-            if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
+    foreach ($segment in ($DmarcRecordRaw -split ';')) {
+        $normalized = $segment.Trim()
+        if ([string]::IsNullOrWhiteSpace($normalized)) { continue }
 
-            if ($normalized -match '(?i)(?:^|;\s*)(?:rua|ruf)\s*=') {
-                return $true
-            }
+        if ($normalized -match '(?i)^(?:rua|ruf)\s*=') {
+            return $true
         }
     }
 
@@ -286,12 +315,18 @@ function Send-DomainPostureToLogAnalytics {
         [hashtable[]]$Records
     )
 
-    $dcrEndpoint = $env:DCR_ENDPOINT
-    $dcrImmutableId = $env:DCR_IMMUTABLE_ID
-    $streamName = $env:DCR_STREAM_NAME
+    # Deliberately separate from DCR_ENDPOINT/DCR_IMMUTABLE_ID/DCR_STREAM_NAME, which the
+    # DMARC report ingestion functions use for the DMARCReports_CL stream. Reusing those
+    # here would silently post posture rows (Domain/CheckType/RecordRaw/...) into the
+    # DMARC report stream the moment this function shares a Function App with them -
+    # this collector has no dedicated DCR/table yet (see docs/BACKLOG.md C0), so it must
+    # fail closed rather than guess at a shared, wrong-shaped destination.
+    $dcrEndpoint = $env:POSTURE_DCR_ENDPOINT
+    $dcrImmutableId = $env:POSTURE_DCR_IMMUTABLE_ID
+    $streamName = $env:POSTURE_DCR_STREAM_NAME
 
     if (-not $dcrEndpoint -or -not $dcrImmutableId -or -not $streamName) {
-        throw 'Missing DCR configuration. Ensure DCR_ENDPOINT, DCR_IMMUTABLE_ID, and DCR_STREAM_NAME are set.'
+        throw 'Missing DCR configuration. Ensure POSTURE_DCR_ENDPOINT, POSTURE_DCR_IMMUTABLE_ID, and POSTURE_DCR_STREAM_NAME are set to a dedicated DomainPosture_CL data collection rule/stream - do not point these at the DMARC report ingestion DCR.'
     }
 
     $token = Get-ManagedIdentityToken -Resource 'https://monitor.azure.com'
@@ -307,7 +342,15 @@ function Send-DomainPostureToLogAnalytics {
         $body = "[$body]"
     }
 
-    Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body | Out-Null
+    try {
+        Invoke-WithRetry -ScriptBlock { Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body } | Out-Null
+        Write-Information "Successfully sent $($Records.Count) domain posture record(s) to Log Analytics."
+    }
+    catch {
+        $statusCode = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { 'N/A' }
+        Write-Error "Domain posture Logs Ingestion API request failed - HTTP $statusCode : $_"
+        throw
+    }
 }
 
 Export-ModuleMember -Function @(

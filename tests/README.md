@@ -1,4 +1,4 @@
-# DMARC Analyzer - Pester Test Configuration
+# DMARC for Defender XDR - Pester Test Configuration
 
 ## Overview
 
