@@ -33,6 +33,43 @@ function Get-DomainPostureScope {
     return $domains.ToArray()
 }
 
+function Invoke-DnsTxtLookup {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue) {
+        return Resolve-DnsName -Name $Name -Type TXT -ErrorAction SilentlyContinue
+    }
+
+    $nslookup = Get-Command nslookup -ErrorAction SilentlyContinue
+    if ($null -eq $nslookup) {
+        return @()
+    }
+
+    $rawOutput = & $nslookup.Source -type=txt $Name 2>$null
+    if ($null -eq $rawOutput) {
+        return @()
+    }
+
+    $entries = @()
+    foreach ($line in @($rawOutput)) {
+        if ($line -match 'text\s*=\s*"(.*)"') {
+            $entries += $Matches[1]
+        }
+    }
+
+    if ($entries.Count -eq 0) {
+        return @()
+    }
+
+    return $entries | ForEach-Object {
+        [pscustomobject]@{ Strings = @($_) }
+    }
+}
+
 function Get-RecordResult {
     [CmdletBinding()]
     param(
@@ -46,7 +83,7 @@ function Get-RecordResult {
         [string]$CheckType
     )
 
-    $result = Resolve-DnsName -Name $RecordName -Type TXT -ErrorAction SilentlyContinue
+    $result = Invoke-DnsTxtLookup -Name $RecordName
     $rawEntries = @()
     foreach ($item in @($result)) {
         if ($item.Strings) {
@@ -125,7 +162,7 @@ function Get-SpfResult {
 
         if (-not $seen.Add($LookupName.ToLowerInvariant())) { return }
 
-        $dnsResult = Resolve-DnsName -Name $LookupName -Type TXT -ErrorAction SilentlyContinue
+        $dnsResult = Invoke-DnsTxtLookup -Name $LookupName
         $values = @()
         foreach ($item in @($dnsResult)) {
             if ($item.Strings) { $values += ($item.Strings -join ' ') }
@@ -200,7 +237,7 @@ function Get-DkimSelectorsForDomain {
 
     foreach ($selector in $candidates.ToArray()) {
         $lookup = "$selector._domainkey.$Domain"
-        $records = Resolve-DnsName -Name $lookup -Type TXT -ErrorAction SilentlyContinue
+        $records = Invoke-DnsTxtLookup -Name $lookup
         if ($null -ne $records -and @($records).Count -gt 0) {
             continue
         }
@@ -219,7 +256,7 @@ function Test-ReportDmarcRelevant {
     )
 
     $recordName = "_dmarc.$Domain"
-    $records = Resolve-DnsName -Name $recordName -Type TXT -ErrorAction SilentlyContinue
+    $records = Invoke-DnsTxtLookup -Name $recordName
     foreach ($record in @($records)) {
         $entries = @()
         foreach ($item in @($record.Strings)) {
